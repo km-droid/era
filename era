@@ -1,3 +1,184 @@
+//*/pages/api/stores.ts
+import { NextApiRequest, NextApiResponse } from 'next'
+import { Datastore } from '@google-cloud/datastore'
+
+const datastore = new Datastore()
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'GET') {
+    try {
+      const query = datastore.createQuery('Store')
+      const [stores] = await datastore.runQuery(query)
+      const formattedStores = stores.map(store => ({
+        id: store[datastore.KEY].id,
+        storeNo: store.storeNo,
+        name: store.name,
+        address: store.address,
+        rolloutPhase: store.rolloutPhase,
+        status: store.status,
+        manager: store.manager,
+        contactEmail: store.contactEmail,
+        contactPhone: store.contactPhone,
+        size: store.size,
+        annualRevenue: store.annualRevenue
+      }))
+      res.status(200).json(formattedStores)
+    } catch (error) {
+      res.status(500).json({ error: 'Error fetching stores' })
+    }
+  } else if (req.method === 'POST') {
+    try {
+      const key = datastore.key('Store')
+      const entity = {
+        key: key,
+        data: req.body
+      }
+      await datastore.save(entity)
+      res.status(201).json({ message: 'Store added successfully' })
+    } catch (error) {
+      res.status(500).json({ error: 'Error adding store' })
+    }
+  } else {
+    res.status(405).json({ error: 'Method not allowed' })
+  }
+}
+
+//*import { NextApiRequest, NextApiResponse } from 'next'
+import { Datastore } from '@google-cloud/datastore'
+
+const datastore = new Datastore()
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'GET') {
+    try {
+      const query = datastore.createQuery('Store')
+      const [stores] = await datastore.runQuery(query)
+      const formattedStores = stores.map(store => ({
+        id: store[datastore.KEY].id,
+        storeNo: store.storeNo,
+        name: store.name,
+        address: store.address,
+        rolloutPhase: store.rolloutPhase,
+        status: store.status,
+        manager: store.manager,
+        contactEmail: store.contactEmail,
+        contactPhone: store.contactPhone,
+        size: store.size,
+        annualRevenue: store.annualRevenue
+      }))
+      res.status(200).json(formattedStores)
+    } catch (error) {
+      res.status(500).json({ error: 'Error fetching stores' })
+    }
+  } else if (req.method === 'POST') {
+    try {
+      const key = datastore.key('Store')
+      const entity = {
+        key: key,
+        data: req.body
+      }
+      await datastore.save(entity)
+      res.status(201).json({ message: 'Store added successfully' })
+    } catch (error) {
+      res.status(500).json({ error: 'Error adding store' })
+    }
+  } else {
+    res.status(405).json({ error: 'Method not allowed' })
+  }
+}
+
+//*lib/api.ts
+export async function getStores() {
+  const response = await fetch('/api/stores')
+  if (!response.ok) {
+    throw new Error('Failed to fetch stores')
+  }
+  return response.json()
+}
+
+export async function addStore(storeData: any) {
+  const response = await fetch('/api/stores', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(storeData),
+  })
+  if (!response.ok) {
+    throw new Error('Failed to add store')
+  }
+  return response.json()
+}
+
+export async function getMetrics() {
+  // This is a placeholder. You should create a separate API route for metrics.
+  return {
+    live: 10,
+    onboarded: 20,
+    hardwareAcquired: 15,
+    softwareInstalled: 12
+  }
+}
+
+export async function getStore(id: string) {
+  // This is a placeholder. You should create a separate API route for fetching a single store.
+  const stores = await getStores()
+  return stores.find(store => store.id === id) || null
+}
+
+export async function getStoreStats() {
+  // This is a placeholder. You should create a separate API route for store stats.
+  return {
+    storesByStatus: [
+      { status: 'Not Started', count: 5 },
+      { status: 'In Progress', count: 10 },
+      { status: 'Completed', count: 15 }
+    ],
+    averageRolloutTime: 30
+  }
+}
+
+export async function seedDatabase() {
+  // This is a placeholder. You should create a separate API route for seeding the database.
+  console.log('Seeding database...')
+  // Add your seeding logic here
+  console.log('Database seeded successfully')
+}
+
+//* next.config.ts
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        net: false,
+        tls: false,
+        fs: false,
+      }
+    }
+    return config
+  },
+}
+
+module.exports = nextConfig
+
+//* pages/_api.ts
+import '@/styles/globals.css'
+import type { AppProps } from 'next/app'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+const queryClient = new QueryClient()
+
+export default function App({ Component, pageProps }: AppProps) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Component {...pageProps} />
+    </QueryClientProvider>
+  )
+}
+
 //* lib/utils.tsx
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
