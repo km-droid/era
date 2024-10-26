@@ -1,84 +1,51 @@
-{
-  "version": 1,
-  "entities": [
-    {
-      "key": {
-        "path": [
-          { "kind": "Store", "name": "store_1001" }
-        ]
-      },
-      "properties": {
-        "storeNumber": { "stringValue": "1001", "indexed": true },
-        "storeName": { "stringValue": "Edge Retail Store A", "indexed": true },
-        "address": { "stringValue": "123 Main St, Springfield, IL" },
-        "city": { "stringValue": "Springfield", "indexed": true },
-        "state": { "stringValue": "IL", "indexed": true },
-        "zipCode": { "stringValue": "62704", "indexed": true },
-        "latitude": { "doubleValue": 39.7817, "indexed": true },
-        "longitude": { "doubleValue": -89.6501, "indexed": true },
-        "currentPhase": { "stringValue": "Deployment Phase", "indexed": true },
-        "overallStatus": { "stringValue": "In Progress", "indexed": true },
-        "lastUpdated": { "timestampValue": "2024-10-20T12:00:00Z", "indexed": true },
-        "createdDate": { "timestampValue": "2024-10-01T08:00:00Z", "indexed": true }
-      }
-    },
-    {
-      "key": {
-        "path": [
-          { "kind": "Phase", "name": "phase_1" }
-        ]
-      },
-      "properties": {
-        "phaseId": { "stringValue": "phase1", "indexed": true },
-        "phaseName": { "stringValue": "Planning Phase", "indexed": true },
-        "phaseOrder": { "integerValue": 1, "indexed": true }
-      }
-    },
-    {
-      "key": {
-        "path": [
-          { "kind": "Task", "name": "task_1001_1" }
-        ]
-      },
-      "properties": {
-        "taskId": { "stringValue": "task_1001_1", "indexed": true },
-        "storeNumber": { "stringValue": "1001", "indexed": true },
-        "phaseId": { "stringValue": "phase1", "indexed": true },
-        "taskName": { "stringValue": "Site Assessment", "indexed": true },
-        "teamId": { "stringValue": "team1", "indexed": true },
-        "status": { "stringValue": "Completed", "indexed": true },
-        "startDate": { "timestampValue": "2024-10-01T09:00:00Z", "indexed": true },
-        "endDate": { "timestampValue": "2024-10-03T17:00:00Z", "indexed": true },
-        "lastUpdated": { "timestampValue": "2024-10-04T10:00:00Z", "indexed": true },
-        "notes": { "stringValue": "Site assessment completed successfully." }
-      }
-    },
-    {
-      "key": {
-        "path": [
-          { "kind": "Team", "name": "team_1" }
-        ]
-      },
-      "properties": {
-        "teamId": { "stringValue": "team1", "indexed": true },
-        "teamName": { "stringValue": "Network Team", "indexed": true },
-        "contactEmail": { "stringValue": "network@example.com" },
-        "contactPhone": { "stringValue": "555-0001" }
-      }
-    },
-    {
-      "key": {
-        "path": [
-          { "kind": "PhaseProgress", "name": "progress_1001_phase1" }
-        ]
-      },
-      "properties": {
-        "storeNumber": { "stringValue": "1001", "indexed": true },
-        "phaseId": { "stringValue": "phase1", "indexed": true },
-        "progress": { "doubleValue": 100.0, "indexed": true },
-        "startDate": { "timestampValue": "2024-10-01T09:00:00Z", "indexed": true },
-        "endDate": { "timestampValue": "2024-10-03T17:00:00Z", "indexed": true }
-      }
+// src/pages/api/stores/index.ts
+import { NextApiRequest, NextApiResponse } from 'next'
+import { Datastore } from '@google-cloud/datastore'
+
+const datastore = new Datastore()
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'GET') {
+    try {
+      const query = datastore.createQuery('Store')
+      const [stores] = await datastore.runQuery(query)
+      const formattedStores = stores.map(store => ({
+        id: store[datastore.KEY].id,
+        ...store
+      }))
+      res.status(200).json(formattedStores)
+    } catch (error) {
+      console.error('Error fetching stores:', error)
+      res.status(500).json({ error: 'Error fetching stores' })
     }
-  ]
+  } else if (req.method === 'POST') {
+    try {
+      const { storeNo, name, address, manager, contactEmail, contactPhone, size, annualRevenue, rolloutPhase, status } = req.body
+      const storeKey = datastore.key('Store')
+      const store = {
+        key: storeKey,
+        data: {
+          storeNo,
+          name,
+          address,
+          manager,
+          contactEmail,
+          contactPhone,
+          size,
+          annualRevenue,
+          rolloutPhase,
+          status,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        }
+      }
+      await datastore.save(store)
+      res.status(201).json({ id: storeKey.id, ...store.data })
+    } catch (error) {
+      console.error('Error creating store:', error)
+      res.status(500).json({ error: 'Error creating store' })
+    }
+  } else {
+    res.status(405).json({ error: 'Method not allowed' })
+  }
 }
