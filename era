@@ -1,3 +1,86 @@
+//pages/seed.tsx
+import React, { useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import Layout from '@/components/Layout'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faDatabase } from '@fortawesome/free-solid-svg-icons'
+import { seedDatabase } from '@/lib/api'
+
+export default function SeedDatabase() {
+  const [seeding, setSeeding] = useState(false)
+
+  const mutation = useMutation({
+    mutationFn: seedDatabase,
+    onMutate: () => {
+      setSeeding(true)
+    },
+    onSettled: () => {
+      setSeeding(false)
+    },
+  })
+
+  const handleSeed = () => {
+    mutation.mutate()
+  }
+
+  return (
+    <Layout>
+      <div className="p-6 space-y-6">
+        <h1 className="text-2xl font-semibold text-white">Seed Database</h1>
+        <div className="bg-gray-800 shadow-md rounded-lg p-6">
+          <p className="text-gray-300 mb-4">
+            Click the button below to seed the database with sample data for testing and demonstration purposes.
+          </p>
+          <button
+            onClick={handleSeed}
+            disabled={seeding}
+            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline disabled:opacity-50"
+          >
+            <FontAwesomeIcon icon={faDatabase} className="mr-2" />
+            {seeding ? 'Seeding...' : 'Seed Database'}
+          </button>
+          {mutation.isSuccess && (
+            <p className="text-green-500 mt-4">Database seeded successfully!</p>
+          )}
+          {mutation.isError && (
+            <p className="text-red-500 mt-4">Error seeding database: {mutation.error.message}</p>
+          )}
+        </div>
+      </div>
+    </Layout>
+  )
+}
+
+//*metric card
+import React from 'react'
+
+interface MetricCardProps {
+  title: string
+  value: number
+  icon: React.ReactNode
+  color: string
+}
+
+export default function MetricCard({ title, value, icon, color }: MetricCardProps) {
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded-lg p-5">
+      <div className="flex items-center">
+        <div className={`flex-shrink-0 ${color}`}>
+          {icon}
+        </div>
+        <div className="ml-5 w-0 flex-1">
+          <dl>
+            <dt className="text-sm font-medium text-gray-400 truncate">{title}</dt>
+            <dd>
+              <div className="text-lg font-medium text-white">{value.toLocaleString()}</div>
+            </dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 //* src/compo/layout.tsx
 import React from 'react'
 import Link from 'next/link'
