@@ -1,3 +1,107 @@
+//*id.tsx
+import React from 'react'
+import { useRouter } from 'next/router'
+import { useQuery } from '@tanstack/react-query'
+import Layout from '@/components/Layout'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faStore, faUser, faEnvelope, faPhone, faDollarSign, faRulerCombined } from '@fortawesome/free-solid-svg-icons'
+import { getStore, getTasks, getHardwareInventory, getSoftwareInstallations } from '@/lib/api'
+
+export default function StoreDetails() {
+  const router = useRouter()
+  const { id } = router.query
+
+  const { data: store, isLoading: storeLoading } = useQuery({
+    queryKey: ['store', id],
+    queryFn: () => getStore(id as string),
+    enabled: !!id,
+  })
+
+  const { data: tasks } = useQuery({
+    queryKey: ['tasks', id],
+    queryFn: () => getTasks(id as string),
+    enabled: !!id,
+  })
+
+  const { data: hardware } = useQuery({
+    queryKey: ['hardware', id],
+    queryFn: () => getHardwareInventory(id as string),
+    enabled: !!id,
+  })
+
+  const { data: software } = useQuery({
+    queryKey: ['software', id],
+    queryFn: () => getSoftwareInstallations(id as string),
+    enabled: !!id,
+  })
+
+  if (storeLoading) return <Layout><div className="text-white">Loading...</div></Layout>
+  if (!store) return <Layout><div className="text-white">Store not found</div></Layout>
+
+  return (
+    <Layout>
+      <div className="p-6 space-y-6">
+        <h1 className="text-2xl font-semibold text-white">{store.name} Details</h1>
+        <div className="bg-gray-800 shadow-md rounded-lg p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex items-center">
+              <FontAwesomeIcon icon={faStore} className="text-blue-500 mr-2" />
+              <span className="text-gray-300">Store Number: {store.storeNo}</span>
+            </div>
+            <div className="flex items-center">
+              <FontAwesomeIcon icon={faUser} className="text-blue-500 mr-2" />
+              <span className="text-gray-300">Manager: {store.manager}</span>
+            </div>
+            <div className="flex items-center">
+              <FontAwesomeIcon icon={faEnvelope} className="text-blue-500 mr-2" />
+              <span className="text-gray-300">Email: {store.contactEmail}</span>
+            </div>
+            <div className="flex items-center">
+              <FontAwesomeIcon icon={faPhone} className="text-blue-500 mr-2" />
+              <span className="text-gray-300">Phone: {store.contactPhone}</span>
+            </div>
+            <div className="flex items-center">
+              <FontAwesomeIcon icon={faRulerCombined} className="text-blue-500 mr-2" />
+              <span className="text-gray-300">Size: {store.size} sq ft</span>
+            </div>
+            <div className="flex items-center">
+              <FontAwesomeIcon icon={faDollarSign} className="text-blue-500 mr-2" />
+              <span className="text-gray-300">Annual Revenue: ${store.annualRevenue.toLocaleString()}</span>
+            </div>
+          </div>
+          <div className="mt-4">
+            <h2 className="text-xl font-semibold text-white mb-2">Address</h2>
+            <p className="text-gray-300">
+              {store.address.street}, {store.address.city}, {store.address.state} {store.address.zipcode}, {store.address.country}
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-gray-800 shadow-md rounded-lg p-6">
+          <h2 className="text-xl font-semibold text-white mb-4">Rollout Progress</h2>
+          <div className="flex justify-between items-center">
+            {['Hardware Requested', 'Hardware Delivered', 'Software Install', 'Live'].map((phase, index) => (
+              <div key={phase} className="flex flex-col items-center">
+                <div 
+                  className={`w-8 h-8 rounded-full mb-2 ${
+                    index < store.rolloutPhase ? 'bg-green-500' :
+                    index === store.rolloutPhase ? 'bg-yellow-500' :
+                    'bg-gray-600'
+                  }`}
+                />
+                <div className="text-xs text-center max-w-[80px] text-gray-400">{phase}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Tasks, Hardware Inventory, and Software Installations sections would go here */}
+        {/* For brevity, I'm not including these sections in this example, but they would follow a similar pattern */}
+      </div>
+    </Layout>
+  )
+}
+
 //*_app.tsx
 import '@/styles/globals.css'
 import type { AppProps } from 'next/app'
