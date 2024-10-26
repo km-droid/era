@@ -1,3 +1,190 @@
+//*_app.tsx
+import '@/styles/globals.css'
+import type { AppProps } from 'next/app'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+const queryClient = new QueryClient()
+
+export default function App({ Component, pageProps }: AppProps) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Component {...pageProps} />
+    </QueryClientProvider>
+  )
+}
+
+//* index.tsx
+import React from 'react'
+import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import Layout from '@/components/Layout'
+import MetricCard from '@/components/MetricCard'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faRocket, faBox, faServer, faDesktop, faSort, faSearch, faFilter } from '@fortawesome/free-solid-svg-icons'
+import { getStores, getMetrics } from '@/lib/api'
+import Link from 'next/link'
+
+// Create a client
+const queryClient = new QueryClient()
+
+function Dashboard() {
+  const { data: stores, isLoading: storesLoading } = useQuery({ queryKey: ['stores'], queryFn: getStores })
+  const { data: metrics } = useQuery({ queryKey: ['metrics'], queryFn: getMetrics })
+
+  const [search, setSearch] = React.useState('')
+  const [sortColumn, setSortColumn] = React.useState('storeNo')
+  const [sortDirection, setSortDirection] = React.useState('asc')
+  const [phaseFilter, setPhaseFilter] = React.useState('')
+  const [statusFilter, setStatusFilter] = React.useState('')
+
+  const filteredAndSortedStores = React.useMemo(() => {
+    if (!stores) return []
+
+    return stores
+      .filter(store => 
+        (store.storeNo.toString().includes(search) ||
+        store.address.street.toLowerCase().includes(search.toLowerCase())) &&
+        (phaseFilter ? store.rolloutPhase === phaseFilter : true) &&
+        (statusFilter ? store.status === statusFilter : true)
+      )
+      .sort((a, b) => {
+        if (a[sortColumn] < b[sortColumn]) return sortDirection === 'asc' ? -1 : 1
+        if (a[sortColumn] > b[sortColumn]) return sortDirection === 'asc' ? 1 : -1
+        return 0
+      })
+  }, [stores, search, sortColumn, sortDirection, phaseFilter, statusFilter])
+
+  const handleSort = (column: string) => {
+    if (column === sortColumn) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColumn(column)
+      setSortDirection('asc')
+    }
+  }
+
+  return (
+    <Layout>
+      <div className="p-6 space-y-6">
+        <div className="grid grid-cols-1 gap-6 mb-6 lg:grid-cols-4">
+          <MetricCard title="Live" value={metrics?.live || 0} icon={<FontAwesomeIcon icon={faRocket} />} color="text-blue-500" />
+          <MetricCard title="Onboarded" value={metrics?.onboarded || 0} icon={<FontAwesomeIcon icon={faBox} />} color="text-yellow-500" />
+          <MetricCard title="Hardware Acquired" value={metrics?.hardwareAcquired || 0} icon={<FontAwesomeIcon icon={faServer} />} color="text-purple-500" />
+          <MetricCard title="Software Installed" value={metrics?.softwareInstalled || 0} icon={<FontAwesomeIcon icon={faDesktop} />} color="text-green-500" />
+        </div>
+
+        <div className="flex items-center mb-6 space-x-4">
+          <div className="relative flex-grow">
+            <input
+              type="text"
+              placeholder="Search Stores ...."
+              className="w-full px-4 py-2 pl-10 text-gray-300 bg-gray-800 border border-gray-700 rounded-md focus:outline-none focus:border-blue-500"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <FontAwesomeIcon icon={faSearch} className="absolute left-3 top-3 text-gray-400" />
+          </div>
+          <select
+            className="px-4 py-2 text-gray-300 bg-gray-800 border border-gray-700 rounded-md focus:outline-none focus:border-blue-500"
+            value={phaseFilter}
+            onChange={(e) => setPhaseFilter(e.target.value)}
+          >
+            <option value="">All Phases</option>
+            <option value="Planning">Planning</option>
+            <option value="Hardware">Hardware</option>
+            <option value="Software">Software</option>
+            <option value="Training">Training</option>
+            <option value="Live">Live</option>
+          </select>
+          <select
+            className="px-4 py-2 text-gray-300 bg-gray-800 border border-gray-700 rounded-md focus:outline-none focus:border-blue-500"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="">All Statuses</option>
+            <option value="Not Started">Not Started</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Completed">Completed</option>
+          </select>
+        </div>
+
+        <div className="bg-gray-800 shadow-md rounded-lg overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-700">
+            <h2 className="text-xl font-semibold text-white">Store Details</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-gray-300">
+              <thead className="text-xs uppercase bg-gray-700 text-gray-400">
+                <tr>
+                  <th className="px-6 py-3 cursor-pointer" onClick={() => handleSort('storeNo')}>
+                    Store Number
+                    {sortColumn === 'storeNo' && (
+                      <FontAwesomeIcon icon={faSort} className="ml-1" />
+                    )}
+                  </th>
+                  <th className="px-6 py-3">Location</th>
+                  <th className="px-6 py-3 cursor-pointer" onClick={() => handleSort('rolloutPhase')}>
+                    Phase
+                    {sortColumn === 'rolloutPhase' && (
+                      <FontAwesomeIcon icon={faSort} className="ml-1" />
+                    )}
+                  </th>
+                  <th className="px-6 py-3 cursor-pointer" onClick={() => handleSort('status')}>
+                    Status
+                    {sortColumn === 'status' && (
+                      <FontAwesomeIcon icon={faSort} className="ml-1" />
+                    )}
+                  </th>
+                  <th className="px-6 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {storesLoading ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-4 text-center">Loading...</td>
+                  </tr>
+                ) : filteredAndSortedStores.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-4 text-center">No stores found</td>
+                  </tr>
+                ) : (
+                  filteredAndSortedStores.map((store) => (
+                    <tr key={store.id} className="border-b border-gray-700">
+                      <td className="px-6 py-4 font-medium">{store.storeNo}</td>
+                      <td className="px-6 py-4">{store.address.street}</td>
+                      <td className="px-6 py-4">{store.rolloutPhase}</td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          store.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                          store.status === 'In Progress' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {store.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <Link href={`/stores/${store.id}`} className="text-blue-500 hover:text-blue-600">View</Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </Layout>
+  )
+}
+
+// Wrap the component with QueryClientProvider
+export default function DashboardPage() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Dashboard />
+    </QueryClientProvider>
+  )
+}
+
 //*seed-emulator
 const { Datastore } = require('@google-cloud/datastore')
 
