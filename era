@@ -1,269 +1,84 @@
-//* src/pages/api/stores/[id]/tasks.ts
-import { NextApiRequest, NextApiResponse } from 'next'
-import { Datastore } from '@google-cloud/datastore'
-
-const datastore = new Datastore()
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { id } = req.query
-
-  if (req.method === 'GET') {
-    try {
-      const query = datastore.createQuery('Task').filter('storeId', '=', id)
-      const [tasks] = await datastore.runQuery(query)
-      res.status(200).json(tasks)
-    } catch (error) {
-      console.error('Error fetching tasks:', error)
-      res.status(500).json({ error: 'Error fetching tasks' })
+{
+  "version": 1,
+  "entities": [
+    {
+      "key": {
+        "path": [
+          { "kind": "Store", "name": "store_1001" }
+        ]
+      },
+      "properties": {
+        "storeNumber": { "stringValue": "1001", "indexed": true },
+        "storeName": { "stringValue": "Edge Retail Store A", "indexed": true },
+        "address": { "stringValue": "123 Main St, Springfield, IL" },
+        "city": { "stringValue": "Springfield", "indexed": true },
+        "state": { "stringValue": "IL", "indexed": true },
+        "zipCode": { "stringValue": "62704", "indexed": true },
+        "latitude": { "doubleValue": 39.7817, "indexed": true },
+        "longitude": { "doubleValue": -89.6501, "indexed": true },
+        "currentPhase": { "stringValue": "Deployment Phase", "indexed": true },
+        "overallStatus": { "stringValue": "In Progress", "indexed": true },
+        "lastUpdated": { "timestampValue": "2024-10-20T12:00:00Z", "indexed": true },
+        "createdDate": { "timestampValue": "2024-10-01T08:00:00Z", "indexed": true }
+      }
+    },
+    {
+      "key": {
+        "path": [
+          { "kind": "Phase", "name": "phase_1" }
+        ]
+      },
+      "properties": {
+        "phaseId": { "stringValue": "phase1", "indexed": true },
+        "phaseName": { "stringValue": "Planning Phase", "indexed": true },
+        "phaseOrder": { "integerValue": 1, "indexed": true }
+      }
+    },
+    {
+      "key": {
+        "path": [
+          { "kind": "Task", "name": "task_1001_1" }
+        ]
+      },
+      "properties": {
+        "taskId": { "stringValue": "task_1001_1", "indexed": true },
+        "storeNumber": { "stringValue": "1001", "indexed": true },
+        "phaseId": { "stringValue": "phase1", "indexed": true },
+        "taskName": { "stringValue": "Site Assessment", "indexed": true },
+        "teamId": { "stringValue": "team1", "indexed": true },
+        "status": { "stringValue": "Completed", "indexed": true },
+        "startDate": { "timestampValue": "2024-10-01T09:00:00Z", "indexed": true },
+        "endDate": { "timestampValue": "2024-10-03T17:00:00Z", "indexed": true },
+        "lastUpdated": { "timestampValue": "2024-10-04T10:00:00Z", "indexed": true },
+        "notes": { "stringValue": "Site assessment completed successfully." }
+      }
+    },
+    {
+      "key": {
+        "path": [
+          { "kind": "Team", "name": "team_1" }
+        ]
+      },
+      "properties": {
+        "teamId": { "stringValue": "team1", "indexed": true },
+        "teamName": { "stringValue": "Network Team", "indexed": true },
+        "contactEmail": { "stringValue": "network@example.com" },
+        "contactPhone": { "stringValue": "555-0001" }
+      }
+    },
+    {
+      "key": {
+        "path": [
+          { "kind": "PhaseProgress", "name": "progress_1001_phase1" }
+        ]
+      },
+      "properties": {
+        "storeNumber": { "stringValue": "1001", "indexed": true },
+        "phaseId": { "stringValue": "phase1", "indexed": true },
+        "progress": { "doubleValue": 100.0, "indexed": true },
+        "startDate": { "timestampValue": "2024-10-01T09:00:00Z", "indexed": true },
+        "endDate": { "timestampValue": "2024-10-03T17:00:00Z", "indexed": true }
+      }
     }
-  } else {
-    res.status(405).json({ error: 'Method not allowed' })
-  }
-}
-//*src/pages/api/stores/[id]/hardware.ts
-import { NextApiRequest, NextApiResponse } from 'next'
-import { Datastore } from '@google-cloud/datastore'
-
-const datastore = new Datastore()
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { id } = req.query
-
-  if (req.method === 'GET') {
-    try {
-      const query = datastore.createQuery('HardwareInventory').filter('storeId', '=', id)
-      const [hardware] = await datastore.runQuery(query)
-      res.status(200).json(hardware)
-    } catch (error) {
-      console.error('Error fetching hardware inventory:', error)
-      res.status(500).json({ error: 'Error fetching hardware inventory' })
-    }
-  } else {
-    res.status(405).json({ error: 'Method not allowed' })
-  }
-}
-
-//*src/pages/api/stores/[id]/software.ts
-import { NextApiRequest, NextApiResponse } from 'next'
-import { Datastore } from '@google-cloud/datastore'
-
-const datastore = new Datastore()
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { id } = req.query
-
-  if (req.method === 'GET') {
-    try {
-      const query = datastore.createQuery('SoftwareInstallation').filter('storeId', '=', id)
-      const [software] = await datastore.runQuery(query)
-      res.status(200).json(software)
-    } catch (error) {
-      console.error('Error fetching software installations:', error)
-      res.status(500).json({ error: 'Error fetching software installations' })
-    }
-  } else {
-    res.status(405).json({ error: 'Method not allowed' })
-  }
-}
-
-//*[id].tsx
-
-import React from 'react'
-import { useRouter } from 'next/router'
-import { useQuery } from '@tanstack/react-query'
-import Layout from '@/components/Layout'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faStore, faUser, faEnvelope, faPhone, faDollarSign, faRulerCombined } from '@fortawesome/free-solid-svg-icons'
-import { getStore, getTasks, getHardwareInventory, getSoftwareInstallations } from '@/lib/api'
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-
-export default function StoreDetails() {
-  const router = useRouter()
-  const { id } = router.query
-
-  const { data: store, isLoading: storeLoading } = useQuery({
-    queryKey: ['store', id],
-    queryFn: () => getStore(id as string),
-    enabled: !!id,
-  })
-
-  const { data: tasks } = useQuery({
-    queryKey: ['tasks', id],
-    queryFn: () => getTasks(id as string),
-    enabled: !!id,
-  })
-
-  const { data: hardware } = useQuery({
-    queryKey: ['hardware', id],
-    queryFn: () => getHardwareInventory(id as string),
-    enabled: !!id,
-  })
-
-  const { data: software } = useQuery({
-    queryKey: ['software', id],
-    queryFn: () => getSoftwareInstallations(id as string),
-    enabled: !!id,
-  })
-
-  if (storeLoading) return <Layout><div className="text-white">Loading...</div></Layout>
-  if (!store) return <Layout><div className="text-white">Store not found</div></Layout>
-
-  const phases = [
-    { name: 'Hardware Requested', status: hardware && hardware.length > 0 ? 'complete' : 'yet-to-start' },
-    { name: 'Hardware Delivered', status: hardware && hardware.every(item => item.status === 'Installed') ? 'complete' : hardware && hardware.some(item => item.status === 'Installed') ? 'in-progress' : 'yet-to-start' },
-    { name: 'Software Install', status: software && software.length > 0 ? (software.every(item => item.status === 'Installed') ? 'complete' : 'in-progress') : 'yet-to-start' },
-    { name: 'Live', status: store.status === 'Completed' ? 'complete' : store.status === 'In Progress' ? 'in-progress' : 'yet-to-start' },
   ]
-
-  return (
-    <Layout>
-      <div className="p-6 space-y-6">
-        <Card className="bg-background border-border">
-          <CardHeader>
-            <CardTitle className="text-foreground">{store.name}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground">{store.address.street}, {store.address.city}, {store.address.state} {store.address.zipcode}</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-background border-border">
-          <CardHeader>
-            <CardTitle className="text-foreground">Rollout Progress</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex justify-between items-center">
-              <TooltipProvider>
-                {phases.map((phase, index) => (
-                  <Tooltip key={phase.name}>
-                    <TooltipTrigger>
-                      <div className="flex flex-col items-center">
-                        <div 
-                          className={`w-8 h-8 rounded-full mb-2 ${
-                            phase.status === 'complete' ? 'bg-green-500' :
-                            phase.status === 'in-progress' ? 'bg-yellow-500' :
-                            'bg-gray-600'
-                          }`}
-                        />
-                        <div className="text-xs text-center max-w-[80px] text-muted-foreground">{phase.name}</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{phase.status === 'complete' ? 'Complete' : 
-                          phase.status === 'in-progress' ? 'In Progress' : 
-                          'Yet to Start'}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                ))}
-              </TooltipProvider>
-            </div>
-            <div className="mt-4 h-2 bg-gray-600 rounded-full">
-              <div 
-                className="h-full bg-green-500 rounded-full"
-                style={{ width: `${(phases.filter(p => p.status === 'complete').length / phases.length) * 100}%` }}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <h2 className="text-2xl font-bold mt-8 mb-4 text-foreground">Rollout Tasks</h2>
-        <div className="bg-background shadow overflow-hidden sm:rounded-md">
-          <ul role="list" className="divide-y divide-gray-200 dark:divide-gray-700">
-            {tasks?.map((task) => (
-              <li key={task.id}>
-                <div className="px-4 py-4 sm:px-6">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400 truncate">{task.taskName}</p>
-                    <div className="ml-2 flex-shrink-0 flex">
-                      <p className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100">
-                        {task.status}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-2 sm:flex sm:justify-between">
-                    <div className="sm:flex">
-                      <p className="flex items-center text-sm text-gray-500 dark:text-gray-400">
-                        Assigned to: {task.assignedTo}
-                      </p>
-                    </div>
-                    <div className="mt-2 flex items-center text-sm text-gray-500 dark:text-gray-400 sm:mt-0">
-                      <p>
-                        Due: {new Date(task.dueDate.seconds * 1000).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <h2 className="text-2xl font-bold mt-8 mb-4 text-foreground">Hardware Inventory</h2>
-        <div className="bg-background shadow overflow-hidden sm:rounded-md">
-          <ul role="list" className="divide-y divide-gray-200 dark:divide-gray-700">
-            {hardware?.map((item) => (
-              <li key={item.id}>
-                <div className="px-4 py-4 sm:px-6">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400 truncate">{item.itemName}</p>
-                    <div className="ml-2 flex-shrink-0 flex">
-                      <p className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100">
-                        {item.status}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-2 sm:flex sm:justify-between">
-                    <div className="sm:flex">
-                      <p className="flex items-center text-sm text-gray-500 dark:text-gray-400">
-                        Quantity: {item.quantity}
-                      </p>
-                    </div>
-                    <div className="mt-2 flex items-center text-sm text-gray-500 dark:text-gray-400 sm:mt-0">
-                      <p>
-                        Type: {item.itemType}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <h2 className="text-2xl font-bold mt-8 mb-4 text-foreground">Software Installations</h2>
-        <div className="bg-background shadow overflow-hidden sm:rounded-md">
-          <ul role="list" className="divide-y divide-gray-200 dark:divide-gray-700">
-            {software?.map((installation) => (
-              <li key={installation.id}>
-                <div className="px-4 py-4 sm:px-6">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400 truncate">{installation.softwareName}</p>
-                    <div className="ml-2 flex-shrink-0 flex">
-                      <p className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100">
-                        {installation.status}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-2 sm:flex sm:justify-between">
-                    <div className="sm:flex">
-                      <p className="flex items-center text-sm text-gray-500 dark:text-gray-400">
-                        Version: {installation.version}
-                      </p>
-                    </div>
-                    <div className="mt-2 flex items-center text-sm text-gray-500 dark:text-gray-400 sm:mt-0">
-                      <p>
-                        Installed: {installation.installationDate ? new Date(installation.installationDate.seconds * 1000).toLocaleDateString() : 'Not installed'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    
-    </Layout>
-  )
 }
