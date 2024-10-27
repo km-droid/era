@@ -852,74 +852,69 @@ AvatarFallback.displayName = AvatarPrimitive.Fallback.displayName
 
 export { Avatar, AvatarImage, AvatarFallback }
 //*components/ui/sidebar.tsx
-"use client"
-
-import * as React from "react"
-import * as SidebarPrimitive from "@radix-ui/react-sidebar"
-
+import React, { useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/router'
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
-const Sidebar = React.forwardRef<
-  React.ElementRef<typeof SidebarPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof SidebarPrimitive.Root>
->(({ className, ...props }, ref) => (
-  <SidebarPrimitive.Root
-    ref={ref}
-    className={cn("fixed inset-y-0 left-0 z-40 flex w-64 flex-col", className)}
-    {...props}
-  />
-))
-Sidebar.displayName = SidebarPrimitive.Root.displayName
+interface SidebarProps {
+  className?: string
+}
 
-const SidebarTrigger = React.forwardRef<
-  React.ElementRef<typeof SidebarPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof SidebarPrimitive.Trigger>
->(({ className, ...props }, ref) => (
-  <SidebarPrimitive.Trigger
-    ref={ref}
-    className={cn("absolute right-4 top-4 z-50", className)}
-    {...props}
-  />
-))
-SidebarTrigger.displayName = SidebarPrimitive.Trigger.displayName
+interface NavItem {
+  href: string
+  title: string
+  icon: React.ReactNode
+}
 
-const SidebarContent = React.forwardRef<
-  React.ElementRef<typeof SidebarPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof SidebarPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <SidebarPrimitive.Content
-    ref={ref}
-    className={cn(
-      "flex h-full w-full flex-col overflow-y-auto bg-white p-4 shadow-lg",
+const navItems: NavItem[] = [
+  { href: '/', title: 'Dashboard', icon: <span className="material-icons">dashboard</span> },
+  { href: '/stores', title: 'Stores', icon: <span className="material-icons">store</span> },
+  { href: '/onboard', title: 'Onboard', icon: <span className="material-icons">add_business</span> },
+  { href: '/stats', title: 'Statistics', icon: <span className="material-icons">bar_chart</span> },
+]
+
+export function Sidebar({ className }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState(false)
+  const router = useRouter()
+
+  return (
+    <div className={cn(
+      "flex flex-col h-screen bg-gray-800 text-white transition-all duration-300 ease-in-out",
+      collapsed ? "w-16" : "w-64",
       className
-    )}
-    {...props}
-  />
-))
-SidebarContent.displayName = SidebarPrimitive.Content.displayName
-
-const SidebarHeader = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("flex items-center justify-between py-4", className)}
-    {...props}
-  />
-))
-SidebarHeader.displayName = "SidebarHeader"
-
-const SidebarFooter = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("mt-auto flex items-center justify-between py-4", className)}
-    {...props}
-  />
-))
-SidebarFooter.displayName = "SidebarFooter"
-
-export { Sidebar, SidebarTrigger, SidebarContent, SidebarHeader, SidebarFooter }
+    )}>
+      <div className="flex items-center justify-between p-4">
+        {!collapsed && <h1 className="text-xl font-bold">Store Rollout</h1>}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </Button>
+      </div>
+      <nav className="flex-1">
+        <ul className="space-y-2 p-2">
+          {navItems.map((item) => (
+            <li key={item.href}>
+              <Link href={item.href} passHref>
+                <a className={cn(
+                  "flex items-center p-2 rounded-lg hover:bg-gray-700",
+                  router.pathname === item.href && "bg-gray-700",
+                  collapsed ? "justify-center" : "justify-start"
+                )}>
+                  {item.icon}
+                  {!collapsed && <span className="ml-3">{item.title}</span>}
+                </a>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </div>
+  )
+}
