@@ -1,295 +1,85 @@
-//* lib/db.ts
-import { Datastore } from '@google-cloud/datastore'
+const { fontFamily } = require("tailwindcss/defaultTheme")
 
-const datastore = new Datastore()
-
-export async function getStores() {
-  const query = datastore.createQuery('Store')
-  const [stores] = await datastore.runQuery(query)
-  return stores
-}
-
-export async function getStore(id: string) {
-  const key = datastore.key(['Store', parseInt(id, 10)])
-  const [store] = await datastore.get(key)
-  return store
-}
-
-export async function createStore(storeData) {
-  const key = datastore.key('Store')
-  const entity = {
-    key: key,
-    data: storeData,
-  }
-  await datastore.save(entity)
-  return { id: key.id, ...storeData }
-}
-
-export async function getStoreStats() {
-  const query = datastore.createQuery('Store')
-  const [stores] = await datastore.runQuery(query)
-  
-  const storeStats = {
-    totalStores: stores.length,
-    storesByStatus: {},
-    storesByPhase: {},
-  }
-  
-  stores.forEach(store => {
-    if (storeStats.storesByStatus[store.status]) {
-      storeStats.storesByStatus[store.status]++
-    } else {
-      storeStats.storesByStatus[store.status] = 1
-    }
-    
-    if (storeStats.storesByPhase[store.rolloutPhase]) {
-      storeStats.storesByPhase[store.rolloutPhase]++
-    } else {
-      storeStats.storesByPhase[store.rolloutPhase] = 1
-    }
-  })
-  
-  return storeStats
-}
-
-export async function getTasks(storeId: string) {
-  const query = datastore.createQuery('Task').filter('storeId', '=', storeId)
-  const [tasks] = await datastore.runQuery(query)
-  return tasks
-}
-
-export async function getHardwareInventory(storeId: string) {
-  const query = datastore.createQuery('Hardware').filter('storeId', '=', storeId)
-  const [hardware] = await datastore.runQuery(query)
-  return hardware
-}
-
-export async function getSoftwareInstallations(storeId: string) {
-  const query = datastore.createQuery('Software').filter('storeId', '=', storeId)
-  const [software] = await datastore.runQuery(query)
-  return software
-}
-
-//* lib/api.ts
-export async function getStores() {
-  const response = await fetch('/api/stores')
-  if (!response.ok) {
-    throw new Error('Failed to fetch stores')
-  }
-  return response.json()
-}
-
-export async function getStore(id: string) {
-  const response = await fetch(`/api/stores/${id}`)
-  if (!response.ok) {
-    throw new Error('Failed to fetch store')
-  }
-  return response.json()
-}
-
-export async function createStore(storeData) {
-  const response = await fetch('/api/stores', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: ["class"],
+  content: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+  theme: {
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: {
+        "2xl": "1400px",
+      },
     },
-    body: JSON.stringify(storeData),
-  })
-  if (!response.ok) {
-    throw new Error('Failed to create store')
-  }
-  return response.json()
-}
-
-export async function getStoreStats() {
-  const response = await fetch('/api/metrics')
-  if (!response.ok) {
-    throw new Error('Failed to fetch store stats')
-  }
-  return response.json()
-}
-
-export async function getTasks(storeId: string) {
-  const response = await fetch(`/api/stores/${storeId}/tasks`)
-  if (!response.ok) {
-    throw new Error('Failed to fetch tasks')
-  }
-  return response.json()
-}
-
-export async function getHardwareInventory(storeId: string) {
-  const response = await fetch(`/api/stores/${storeId}/hardware`)
-  if (!response.ok) {
-    throw new Error('Failed to fetch hardware inventory')
-  }
-  return response.json()
-}
-
-export async function getSoftwareInstallations(storeId: string) {
-  const response = await fetch(`/api/stores/${storeId}/software`)
-  if (!response.ok) {
-    throw new Error('Failed to fetch software installations')
-  }
-  return response.json()
-}
-//*pages/api/metrics.ts
-
-import { NextApiRequest, NextApiResponse } from 'next'
-import { getStoreStats } from '../../lib/db'
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method === 'GET') {
-    try {
-      const stats = await getStoreStats()
-      res.status(200).json(stats)
-    } catch (error) {
-      res.status(500).json({ message: 'Error fetching store stats' })
-    }
-  } else {
-    res.setHeader('Allow', ['GET'])
-    res.status(405).end(`Method ${req.method} Not Allowed`)
-  }
-}
-//*stats
-
-import React from 'react'
-import { GetServerSideProps } from 'next'
-import { useQuery } from '@tanstack/react-query'
-import Layout from '@/components/Layout'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { getStoreStats } from '@/lib/api'
-import { getStoreStats as getServerSideStats } from '@/lib/db'
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
-
-export const getServerSideProps: GetServerSideProps = async () => {
-  const initialStats = await getServerSideStats()
-  return { props: { initialStats } }
-}
-
-export default function Stats({ initialStats }) {
-  const { data: storeStats, isLoading, error } = useQuery({ 
-    queryKey: ['storeStats'], 
-    queryFn: getStoreStats,
-    initialData: initialStats,
-  })
-
-  const statusChartData = React.useMemo(() => {
-    if (!storeStats) return []
-    return Object.entries(storeStats.storesByStatus).map(([status, count]) => ({
-      name: status,
-      value: count,
-    }))
-  }, [storeStats])
-
-  const phaseChartData = React.useMemo(() => {
-    if (!storeStats) return []
-    return Object.entries(storeStats.storesByPhase).map(([phase, count]) => ({
-      name: phase,
-      value: count,
-    }))
-  }, [storeStats])
-
-  if (isLoading) return <Layout><div>Loading...</div></Layout>
-  if (error) return <Layout><div>Error loading stats</div></Layout>
-
-  return (
-    <Layout>
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-800">Store Rollout Statistics</h1>
-
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Stores</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{storeStats?.totalStores ?? 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Live Stores</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{storeStats?.storesByStatus['Live'] ?? 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Onboarded</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{storeStats?.storesByStatus['Onboarded'] ?? 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Completion Rate</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {storeStats?.totalStores ? ((storeStats.storesByStatus['Live'] / storeStats.totalStores) * 100).toFixed(1) : 0}%
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Stores by Status</CardTitle>
-            <CardDescription>Distribution of stores across different statuses</CardDescription>
-          </CardHeader>
-          <CardContent className="pl-2">
-            <ResponsiveContainer width="100%" height={350}>
-              <BarChart data={statusChartData}>
-                <XAxis
-                  dataKey="name"
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value}`}
-                />
-                <Bar dataKey="value" fill="#adfa1d" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Stores by Rollout Phase</CardTitle>
-            <CardDescription>Distribution of stores across different rollout phases</CardDescription>
-          </CardHeader>
-          <CardContent className="pl-2">
-            <ResponsiveContainer width="100%" height={350}>
-              <BarChart data={phaseChartData}>
-                <XAxis
-                  dataKey="name"
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value}`}
-                />
-                <Bar dataKey="value" fill="#22c55e" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
-    </Layout>
-  )
+    extend: {
+      colors: {
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+        // Custom colors for the dashboard
+        dashboard: {
+          background: "#0f1729",
+          card: "#1c2537",
+          purple: "#bf7af0",
+          blue: "#0ea5e9",
+          pink: "#ec4899",
+          green: "#22c55e",
+        },
+      },
+      borderRadius: {
+        lg: `var(--radius)`,
+        md: `calc(var(--radius) - 2px)`,
+        sm: "calc(var(--radius) - 4px)",
+      },
+      fontFamily: {
+        sans: ["var(--font-sans)", ...fontFamily.sans],
+      },
+      keyframes: {
+        "accordion-down": {
+          from: { height: 0 },
+          to: { height: "var(--radix-accordion-content-height)" },
+        },
+        "accordion-up": {
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: 0 },
+        },
+      },
+      animation: {
+        "accordion-down": "accordion-down 0.2s ease-out",
+        "accordion-up": "accordion-up 0.2s ease-out",
+      },
+    },
+  },
+  plugins: [require("tailwindcss-animate")],
 }
