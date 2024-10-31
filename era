@@ -1,10 +1,58 @@
+import React from 'react'
+
+interface SelectProps {
+  value: string
+  onChange: (value: string) => void
+  options: string[]
+  disabled?: boolean
+}
+
+export function Select({ value, onChange, options, disabled = false }: SelectProps) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+    >
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+*************************
+
+import React from 'react'
+
+interface CheckboxProps {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  disabled?: boolean
+}
+
+export function Checkbox({ checked, onChange, disabled = false }: CheckboxProps) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      disabled={disabled}
+      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+    />
+  )
+}
+**************************
+
 'use client'
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import DashboardLayout from '@/components/DashboardLayout'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -98,29 +146,29 @@ export default function StorePage() {
   const completedSteps = 3 // For the progress tracker
 
   return (
-    <DashboardLayout>
-      <div className="flex gap-8">
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex flex-col lg:flex-row gap-8">
         {/* Left Sidebar */}
-        <Card className="w-80 bg-primary-900">
+        <Card className="w-full lg:w-80 bg-gray-800">
           <CardContent className="p-6 space-y-6">
             <div className="flex items-center gap-3">
-              <FontAwesomeIcon icon={faStore} className="text-2xl text-primary" />
-              <h2 className="text-2xl font-bold">Store {id}</h2>
+              <FontAwesomeIcon icon={faStore} className="text-2xl text-blue-500" />
+              <h2 className="text-2xl font-bold text-white">Store {id}</h2>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-4 text-white">
               <div className="flex items-start gap-3">
-                <FontAwesomeIcon icon={faHome} className="mt-1 text-primary" />
+                <FontAwesomeIcon icon={faHome} className="mt-1 text-blue-500" />
                 <div>
                   <p>123 Main st</p>
                   <p>austin tx -78654</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <FontAwesomeIcon icon={faEnvelope} className="text-primary" />
+                <FontAwesomeIcon icon={faEnvelope} className="text-blue-500" />
                 <p>Jeremy@gmail.com</p>
               </div>
               <div className="flex items-center gap-3">
-                <FontAwesomeIcon icon={faPhone} className="text-primary" />
+                <FontAwesomeIcon icon={faPhone} className="text-blue-500" />
                 <p>510-555-5555</p>
               </div>
             </div>
@@ -139,7 +187,7 @@ export default function StorePage() {
                   <div>ORDER #V34XDHR</div>
                   <div>Expected Arrival 01/12/19</div>
                 </div>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-gray-500">
                   USPS 234094567242423422898
                 </div>
               </div>
@@ -149,7 +197,7 @@ export default function StorePage() {
                   {['Order Processed', 'Order Shipped', 'Order En Route', 'Order Arrived'].map((step, index) => (
                     <div key={step} className="flex flex-col items-center w-1/4">
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-2 
-                        ${index <= completedSteps ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                        ${index <= completedSteps ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-600'}`}>
                         <FontAwesomeIcon icon={
                           index === 0 ? faClipboardCheck :
                           index === 1 ? faBox :
@@ -161,9 +209,9 @@ export default function StorePage() {
                     </div>
                   ))}
                 </div>
-                <div className="absolute top-4 left-0 w-full h-0.5 bg-muted -z-10">
+                <div className="absolute top-4 left-0 w-full h-0.5 bg-gray-300 -z-10">
                   <div 
-                    className="h-full bg-primary transition-all duration-500" 
+                    className="h-full bg-blue-500 transition-all duration-500" 
                     style={{ width: `${(completedSteps / 3) * 100}%` }}
                   />
                 </div>
@@ -176,7 +224,7 @@ export default function StorePage() {
               <CardTitle>Rollout Tasks</CardTitle>
               {isEditing ? (
                 <div className="space-x-2">
-                  <Button onClick={handleSubmit} variant="default">Submit</Button>
+                  <Button onClick={handleSubmit}>Submit</Button>
                   <Button onClick={handleCancel} variant="outline">Cancel</Button>
                 </div>
               ) : (
@@ -184,67 +232,46 @@ export default function StorePage() {
               )}
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border">
+              <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Task</th>
-                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Phase</th>
-                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Team</th>
-                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                    <tr className="border-b">
+                      <th className="px-4 py-2 text-left">Task</th>
+                      <th className="px-4 py-2 text-left">Phase</th>
+                      <th className="px-4 py-2 text-left">Team</th>
+                      <th className="px-4 py-2 text-left">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {tasks.map((task) => (
-                      <tr key={task.id} className="border-b transition-colors hover:bg-muted/50">
-                        <td className="p-4">
+                      <tr key={task.id} className="border-b">
+                        <td className="px-4 py-2">
                           <div className="flex items-center gap-3">
-                            <FontAwesomeIcon icon={task.icon} className="text-primary" />
+                            <FontAwesomeIcon icon={task.icon} className="text-blue-500" />
                             <span>{task.name}</span>
                           </div>
                         </td>
-                        <td className="p-4">
+                        <td className="px-4 py-2">
                           <Select
-                            disabled={!isEditing}
                             value={task.phase}
-                            onValueChange={(value) => handlePhaseChange(task.id, value)}
-                          >
-                            <SelectTrigger className="w-40">
-                              <SelectValue>{task.phase}</SelectValue>
-                            </SelectTrigger>
-                            <SelectContent>
-                              {phases.map((phase) => (
-                                <SelectItem key={phase} value={phase}>
-                                  {phase}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </td>
-                        <td className="p-4">
-                          <Select
+                            onChange={(value) => handlePhaseChange(task.id, value)}
+                            options={phases}
                             disabled={!isEditing}
-                            value={task.team}
-                            onValueChange={(value) => handleTeamChange(task.id, value)}
-                          >
-                            <SelectTrigger className="w-40">
-                              <SelectValue>{task.team}</SelectValue>
-                            </SelectTrigger>
-                            <SelectContent>
-                              {teams.map((team) => (
-                                <SelectItem key={team} value={team}>
-                                  {team}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          />
                         </td>
-                        <td className="p-4">
+                        <td className="px-4 py-2">
+                          <Select
+                            value={task.team}
+                            onChange={(value) => handleTeamChange(task.id, value)}
+                            options={teams}
+                            disabled={!isEditing}
+                          />
+                        </td>
+                        <td className="px-4 py-2">
                           <Checkbox
                             checked={task.completed}
+                            onChange={(checked) => handleStatusChange(task.id, checked)}
                             disabled={!isEditing}
-                            onCheckedChange={(checked: boolean) => handleStatusChange(task.id, checked)}
-                            className={task.completed ? 'bg-primary border-primary' : ''}
                           />
                         </td>
                       </tr>
@@ -256,52 +283,6 @@ export default function StorePage() {
           </Card>
         </div>
       </div>
-    </DashboardLayout>
+    </div>
   )
-}
-
-import { updateStoreTasks as updateStoreTasksDB } from './db'
-
-// ... (keep existing imports and functions)
-
-export async function updateStoreTasks(storeId: string, tasks: any[]) {
-  try {
-    await updateStoreTasksDB(storeId, tasks)
-  } catch (error) {
-    console.error('Error updating store tasks:', error)
-    throw error
-  }
-}
-
-import { Datastore } from '@google-cloud/datastore'
-
-const datastore = new Datastore()
-
-// ... (keep existing imports and functions)
-
-export async function updateStoreTasks(storeId: string, tasks: any[]) {
-  const storeKey = datastore.key(['Store', storeId])
-  const transaction = datastore.transaction()
-
-  try {
-    await transaction.run()
-
-    const [store] = await transaction.get(storeKey)
-    if (!store) {
-      throw new Error('Store not found')
-    }
-
-    store.tasks = tasks
-
-    transaction.save({
-      key: storeKey,
-      data: store
-    })
-
-    await transaction.commit()
-  } catch (error) {
-    await transaction.rollback()
-    console.error('Error updating store tasks:', error)
-    throw error
-  }
 }
