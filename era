@@ -1,59 +1,6 @@
-import React from 'react'
-
-interface SelectProps {
-  value: string
-  onChange: (value: string) => void
-  options: string[]
-  disabled?: boolean
-}
-
-export function Select({ value, onChange, options, disabled = false }: SelectProps) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-    >
-      {options.map((option) => (
-        <option key={option} value={option}>
-          {option}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-*************************
-
-import React from 'react'
-
-interface CheckboxProps {
-  checked: boolean
-  onChange: (checked: boolean) => void
-  disabled?: boolean
-}
-
-export function Checkbox({ checked, onChange, disabled = false }: CheckboxProps) {
-  return (
-    <input
-      type="checkbox"
-      checked={checked}
-      onChange={(e) => onChange(e.target.checked)}
-      disabled={disabled}
-      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-    />
-  )
-}
-**************************
-
-'use client'
-
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Select } from "@/components/ui/select"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { 
@@ -71,7 +18,6 @@ import {
   faBell,
   faUsers
 } from '@fortawesome/free-solid-svg-icons'
-import { updateStoreTasks } from '@/lib/api'
 
 interface Task {
   id: number
@@ -129,7 +75,8 @@ export default function StorePage() {
 
   const handleSubmit = async () => {
     try {
-      await updateStoreTasks(id as string, tasks)
+      // Placeholder for API call to update tasks
+      // await updateStoreTasks(id as string, tasks)
       setOriginalTasks(tasks)
       setIsEditing(false)
     } catch (error) {
@@ -252,26 +199,40 @@ export default function StorePage() {
                           </div>
                         </td>
                         <td className="px-4 py-2">
-                          <Select
+                          <select
                             value={task.phase}
-                            onChange={(value) => handlePhaseChange(task.id, value)}
-                            options={phases}
+                            onChange={(e) => handlePhaseChange(task.id, e.target.value)}
                             disabled={!isEditing}
-                          />
+                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            {phases.map((phase) => (
+                              <option key={phase} value={phase}>
+                                {phase}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="px-4 py-2">
-                          <Select
+                          <select
                             value={task.team}
-                            onChange={(value) => handleTeamChange(task.id, value)}
-                            options={teams}
+                            onChange={(e) => handleTeamChange(task.id, e.target.value)}
                             disabled={!isEditing}
-                          />
+                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            {teams.map((team) => (
+                              <option key={team} value={team}>
+                                {team}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="px-4 py-2">
-                          <Checkbox
+                          <input
+                            type="checkbox"
                             checked={task.completed}
-                            onChange={(checked) => handleStatusChange(task.id, checked)}
+                            onChange={(e) => handleStatusChange(task.id, e.target.checked)}
                             disabled={!isEditing}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                           />
                         </td>
                       </tr>
