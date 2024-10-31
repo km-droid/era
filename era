@@ -1,178 +1,307 @@
-//*pagination
-import React from 'react'
-import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+'use client'
 
-interface PaginationProps {
-  currentPage: number
-  totalPages: number
-  onPageChange: (page: number) => void
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/router'
+import DashboardLayout from '@/components/DashboardLayout'
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Button } from "@/components/ui/button"
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { 
+  faStore, 
+  faHome, 
+  faEnvelope, 
+  faPhone, 
+  faBox,
+  faTruck,
+  faHouse,
+  faClipboardCheck,
+  faNetworkWired,
+  faServer,
+  faDesktop,
+  faBell,
+  faUsers
+} from '@fortawesome/free-solid-svg-icons'
+import { updateStoreTasks } from '@/lib/api'
+
+interface Task {
+  id: number
+  name: string
+  phase: string
+  team: string
+  completed: boolean
+  icon: any
 }
 
-const Pagination: React.FC<PaginationProps> = ({ currentPage, totalPages, onPageChange }) => {
-  const pageNumbers = []
-  for (let i = 1; i <= totalPages; i++) {
-    if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
-      pageNumbers.push(i)
-    } else if (i === currentPage - 2 || i === currentPage + 2) {
-      pageNumbers.push('...')
+const phases = ['Planning', 'Hardware', 'Software', 'Training', 'Live']
+const teams = ['Infrastructure', 'Network', 'Security', 'Operations', 'Support']
+
+const initialTasks: Task[] = [
+  { id: 1, name: 'Order Hardware', phase: 'Hardware', team: 'Infrastructure', completed: true, icon: faBox },
+  { id: 2, name: 'Hardware Delivered', phase: 'Hardware', team: 'Infrastructure', completed: true, icon: faTruck },
+  { id: 3, name: 'Configure Network', phase: 'Software', team: 'Network', completed: true, icon: faNetworkWired },
+  { id: 4, name: 'Configure Edge', phase: 'Software', team: 'Security', completed: true, icon: faServer },
+  { id: 5, name: 'Deploy Edge Apps', phase: 'Software', team: 'Operations', completed: true, icon: faDesktop },
+  { id: 6, name: 'Monitoring & Alerting', phase: 'Training', team: 'Support', completed: true, icon: faBell },
+  { id: 7, name: 'Handover to Ops', phase: 'Live', team: 'Operations', completed: true, icon: faUsers }
+]
+
+export default function StorePage() {
+  const [isEditing, setIsEditing] = useState(false)
+  const [tasks, setTasks] = useState<Task[]>(initialTasks)
+  const [originalTasks, setOriginalTasks] = useState<Task[]>(initialTasks)
+  const router = useRouter()
+  const { id } = router.query
+
+  useEffect(() => {
+    // Fetch tasks from API when the component mounts
+    // This is a placeholder for the actual API call
+    // setTasks(fetchedTasks)
+    // setOriginalTasks(fetchedTasks)
+  }, [id])
+
+  const handlePhaseChange = (taskId: number, newPhase: string) => {
+    setTasks(tasks.map(task => 
+      task.id === taskId ? { ...task, phase: newPhase } : task
+    ))
+  }
+
+  const handleTeamChange = (taskId: number, newTeam: string) => {
+    setTasks(tasks.map(task => 
+      task.id === taskId ? { ...task, team: newTeam } : task
+    ))
+  }
+
+  const handleStatusChange = (taskId: number, checked: boolean) => {
+    setTasks(tasks.map(task => 
+      task.id === taskId ? { ...task, completed: checked } : task
+    ))
+  }
+
+  const handleSubmit = async () => {
+    try {
+      await updateStoreTasks(id as string, tasks)
+      setOriginalTasks(tasks)
+      setIsEditing(false)
+    } catch (error) {
+      console.error('Failed to update tasks:', error)
+      // Handle error (e.g., show error message to user)
     }
   }
 
+  const handleCancel = () => {
+    setTasks(originalTasks)
+    setIsEditing(false)
+  }
+
+  const completedSteps = 3 // For the progress tracker
+
   return (
-    <div className="flex items-center justify-between border-t border-gray-700 bg-dashboard-card px-4 py-3 sm:px-6">
-      <div className="flex flex-1 justify-between sm:hidden">
-        <Button
-          onClick={() => onPageChange(currentPage - 1)}
-          disabled={currentPage === 1}
-          variant="outline"
-          className="relative inline-flex items-center rounded-md border border-gray-700 bg-dashboard-background px-4 py-2 text-sm font-medium text-gray-400 hover:bg-gray-800"
-        >
-          Previous
-        </Button>
-        <Button
-          onClick={() => onPageChange(currentPage + 1)}
-          disabled={currentPage === totalPages}
-          variant="outline"
-          className="relative ml-3 inline-flex items-center rounded-md border border-gray-700 bg-dashboard-background px-4 py-2 text-sm font-medium text-gray-400 hover:bg-gray-800"
-        >
-          Next
-        </Button>
-      </div>
-      <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm text-gray-400">
-            Showing <span className="font-medium">{(currentPage - 1) * 10 + 1}</span> to{' '}
-            <span className="font-medium">{Math.min(currentPage * 10, totalPages * 10)}</span> of{' '}
-            <span className="font-medium">{totalPages * 10}</span> results
-          </p>
+    <DashboardLayout>
+      <div className="flex gap-8">
+        {/* Left Sidebar */}
+        <Card className="w-80 bg-primary-900">
+          <CardContent className="p-6 space-y-6">
+            <div className="flex items-center gap-3">
+              <FontAwesomeIcon icon={faStore} className="text-2xl text-primary" />
+              <h2 className="text-2xl font-bold">Store {id}</h2>
+            </div>
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <FontAwesomeIcon icon={faHome} className="mt-1 text-primary" />
+                <div>
+                  <p>123 Main st</p>
+                  <p>austin tx -78654</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <FontAwesomeIcon icon={faEnvelope} className="text-primary" />
+                <p>Jeremy@gmail.com</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <FontAwesomeIcon icon={faPhone} className="text-primary" />
+                <p>510-555-5555</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Main Content */}
+        <div className="flex-1 space-y-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Store Rollout Progress</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4">
+                <div className="flex justify-between text-sm mb-2">
+                  <div>ORDER #V34XDHR</div>
+                  <div>Expected Arrival 01/12/19</div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  USPS 234094567242423422898
+                </div>
+              </div>
+              
+              <div className="relative">
+                <div className="flex justify-between mb-2">
+                  {['Order Processed', 'Order Shipped', 'Order En Route', 'Order Arrived'].map((step, index) => (
+                    <div key={step} className="flex flex-col items-center w-1/4">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-2 
+                        ${index <= completedSteps ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                        <FontAwesomeIcon icon={
+                          index === 0 ? faClipboardCheck :
+                          index === 1 ? faBox :
+                          index === 2 ? faTruck :
+                          faHouse
+                        } />
+                      </div>
+                      <span className="text-sm text-center">{step}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="absolute top-4 left-0 w-full h-0.5 bg-muted -z-10">
+                  <div 
+                    className="h-full bg-primary transition-all duration-500" 
+                    style={{ width: `${(completedSteps / 3) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Rollout Tasks</CardTitle>
+              {isEditing ? (
+                <div className="space-x-2">
+                  <Button onClick={handleSubmit} variant="default">Submit</Button>
+                  <Button onClick={handleCancel} variant="outline">Cancel</Button>
+                </div>
+              ) : (
+                <Button onClick={() => setIsEditing(true)} variant="outline">Edit</Button>
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Task</th>
+                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Phase</th>
+                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Team</th>
+                      <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tasks.map((task) => (
+                      <tr key={task.id} className="border-b transition-colors hover:bg-muted/50">
+                        <td className="p-4">
+                          <div className="flex items-center gap-3">
+                            <FontAwesomeIcon icon={task.icon} className="text-primary" />
+                            <span>{task.name}</span>
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <Select
+                            disabled={!isEditing}
+                            value={task.phase}
+                            onValueChange={(value) => handlePhaseChange(task.id, value)}
+                          >
+                            <SelectTrigger className="w-40">
+                              <SelectValue>{task.phase}</SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {phases.map((phase) => (
+                                <SelectItem key={phase} value={phase}>
+                                  {phase}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        <td className="p-4">
+                          <Select
+                            disabled={!isEditing}
+                            value={task.team}
+                            onValueChange={(value) => handleTeamChange(task.id, value)}
+                          >
+                            <SelectTrigger className="w-40">
+                              <SelectValue>{task.team}</SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {teams.map((team) => (
+                                <SelectItem key={team} value={team}>
+                                  {team}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        <td className="p-4">
+                          <Checkbox
+                            checked={task.completed}
+                            disabled={!isEditing}
+                            onCheckedChange={(checked: boolean) => handleStatusChange(task.id, checked)}
+                            className={task.completed ? 'bg-primary border-primary' : ''}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-        <div>
-          <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
-            <Button
-              onClick={() => onPageChange(currentPage - 1)}
-              disabled={currentPage === 1}
-              variant="outline"
-              className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-700 hover:bg-gray-800 focus:z-20 focus:outline-offset-0"
-            >
-              <span className="sr-only">Previous</span>
-              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-            </Button>
-            {pageNumbers.map((pageNumber, index) => (
-              <React.Fragment key={index}>
-                {pageNumber === '...' ? (
-                  <span className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-gray-400 ring-1 ring-inset ring-gray-700 focus:outline-offset-0">
-                    ...
-                  </span>
-                ) : (
-                  <Button
-                    onClick={() => onPageChange(pageNumber as number)}
-                    variant={currentPage === pageNumber ? "default" : "outline"}
-                    className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${
-                      currentPage === pageNumber
-                        ? 'z-10 bg-blue-600 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600'
-                        : 'text-gray-400 ring-1 ring-inset ring-gray-700 hover:bg-gray-800 focus:z-20 focus:outline-offset-0'
-                    }`}
-                  >
-                    {pageNumber}
-                  </Button>
-                )}
-              </React.Fragment>
-            ))}
-            <Button
-              onClick={() => onPageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              variant="outline"
-              className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-700 hover:bg-gray-800 focus:z-20 focus:outline-offset-0"
-            >
-              <span className="sr-only">Next</span>
-              <ChevronRight className="h-5 w-5" aria-hidden="true" />
-            </Button>
-          </nav>
-        </div>
       </div>
-    </div>
+    </DashboardLayout>
   )
 }
 
-export default Pagination
+import { updateStoreTasks as updateStoreTasksDB } from './db'
 
+// ... (keep existing imports and functions)
 
-
-
-
-//*
-import React from 'react'
-import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight } from 'lucide-react'
-
-interface PaginationProps {
-  currentPage: number
-  totalPages: number
-  onPageChange: (page: number) => void
+export async function updateStoreTasks(storeId: string, tasks: any[]) {
+  try {
+    await updateStoreTasksDB(storeId, tasks)
+  } catch (error) {
+    console.error('Error updating store tasks:', error)
+    throw error
+  }
 }
 
-const Pagination: React.FC<PaginationProps> = ({ currentPage, totalPages, onPageChange }) => {
-  return (
-    <div className="flex items-center justify-between px-4 py-3 sm:px-6">
-      <div className="flex flex-1 justify-between sm:hidden">
-        <Button
-          onClick={() => onPageChange(currentPage - 1)}
-          disabled={currentPage === 1}
-          variant="outline"
-        >
-          Previous
-        </Button>
-        <Button
-          onClick={() => onPageChange(currentPage + 1)}
-          disabled={currentPage === totalPages}
-          variant="outline"
-        >
-          Next
-        </Button>
-      </div>
-      <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm text-gray-400">
-            Showing page <span className="font-medium">{currentPage}</span> of{' '}
-            <span className="font-medium">{totalPages}</span>
-          </p>
-        </div>
-        <div>
-          <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
-            <Button
-              onClick={() => onPageChange(currentPage - 1)}
-              disabled={currentPage === 1}
-              variant="outline"
-              className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0"
-            >
-              <span className="sr-only">Previous</span>
-              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-            </Button>
-            {[...Array(totalPages)].map((_, index) => (
-              <Button
-                key={index + 1}
-                onClick={() => onPageChange(index + 1)}
-                variant={currentPage === index + 1 ? "default" : "outline"}
-                className="relative inline-flex items-center px-4 py-2 text-sm font-semibold focus:z-20 focus:outline-offset-0"
-              >
-                {index + 1}
-              </Button>
-            ))}
-            <Button
-              onClick={() => onPageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              variant="outline"
-              className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0"
-            >
-              <span className="sr-only">Next</span>
-              <ChevronRight className="h-5 w-5" aria-hidden="true" />
-            </Button>
-          </nav>
-        </div>
-      </div>
-    </div>
-  )
-}
+import { Datastore } from '@google-cloud/datastore'
 
-export default Pagination
+const datastore = new Datastore()
+
+// ... (keep existing imports and functions)
+
+export async function updateStoreTasks(storeId: string, tasks: any[]) {
+  const storeKey = datastore.key(['Store', storeId])
+  const transaction = datastore.transaction()
+
+  try {
+    await transaction.run()
+
+    const [store] = await transaction.get(storeKey)
+    if (!store) {
+      throw new Error('Store not found')
+    }
+
+    store.tasks = tasks
+
+    transaction.save({
+      key: storeKey,
+      data: store
+    })
+
+    await transaction.commit()
+  } catch (error) {
+    await transaction.rollback()
+    console.error('Error updating store tasks:', error)
+    throw error
+  }
+}
