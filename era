@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
+import DashboardLayout from '@/components/DashboardLayout'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -20,68 +21,92 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 
 interface Task {
-  id: number
-  name: string
-  phase: string
-  team: string
-  completed: boolean
-  icon: any
+  id: string;
+  name: string;
+  phase: string;
+  team: string;
+  completed: boolean;
+  icon: any; // Replace 'any' with the correct type from @fortawesome/fontawesome-svg-core
+}
+
+interface Store {
+  id: string;
+  storeNo: string;
+  address: {
+    street: string;
+    city: string;
+    state: string;
+    zip: string;
+  };
+  email: string;
+  phone: string;
 }
 
 const phases = ['Planning', 'Hardware', 'Software', 'Training', 'Live']
-const teams = ['Infrastructure', 'Network', 'Security', 'Operations', 'Support']
-
-const initialTasks: Task[] = [
-  { id: 1, name: 'Order Hardware', phase: 'Hardware', team: 'Infrastructure', completed: true, icon: faBox },
-  { id: 2, name: 'Hardware Delivered', phase: 'Hardware', team: 'Infrastructure', completed: true, icon: faTruck },
-  { id: 3, name: 'Configure Network', phase: 'Software', team: 'Network', completed: true, icon: faNetworkWired },
-  { id: 4, name: 'Configure Edge', phase: 'Software', team: 'Security', completed: true, icon: faServer },
-  { id: 5, name: 'Deploy Edge Apps', phase: 'Software', team: 'Operations', completed: true, icon: faDesktop },
-  { id: 6, name: 'Monitoring & Alerting', phase: 'Training', team: 'Support', completed: true, icon: faBell },
-  { id: 7, name: 'Handover to Ops', phase: 'Live', team: 'Operations', completed: true, icon: faUsers }
-]
+const teams = ['IT', 'Operations', 'Training', 'Management']
 
 export default function StorePage() {
-  const [isEditing, setIsEditing] = useState(false)
-  const [tasks, setTasks] = useState<Task[]>(initialTasks)
-  const [originalTasks, setOriginalTasks] = useState<Task[]>(initialTasks)
   const router = useRouter()
   const { id } = router.query
+  const [store, setStore] = useState<Store | null>(null)
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [isEditing, setIsEditing] = useState(false)
+  const [originalTasks, setOriginalTasks] = useState<Task[]>([])
 
   useEffect(() => {
-    // Fetch tasks from API when the component mounts
-    // This is a placeholder for the actual API call
-    // setTasks(fetchedTasks)
-    // setOriginalTasks(fetchedTasks)
+    if (id) {
+      // Fetch store data
+      fetch(`/api/stores/${id}`)
+        .then(res => res.json())
+        .then(data => setStore(data))
+
+      // Fetch tasks data
+      fetch(`/api/stores/${id}/tasks`)
+        .then(res => res.json())
+        .then(data => {
+          setTasks(data)
+          setOriginalTasks(data)
+        })
+    }
   }, [id])
 
-  const handlePhaseChange = (taskId: number, newPhase: string) => {
+  const handlePhaseChange = (taskId: string, newPhase: string) => {
     setTasks(tasks.map(task => 
       task.id === taskId ? { ...task, phase: newPhase } : task
     ))
   }
 
-  const handleTeamChange = (taskId: number, newTeam: string) => {
+  const handleTeamChange = (taskId: string, newTeam: string) => {
     setTasks(tasks.map(task => 
       task.id === taskId ? { ...task, team: newTeam } : task
     ))
   }
 
-  const handleStatusChange = (taskId: number, checked: boolean) => {
+  const handleStatusChange = (taskId: string, completed: boolean) => {
     setTasks(tasks.map(task => 
-      task.id === taskId ? { ...task, completed: checked } : task
+      task.id === taskId ? { ...task, completed } : task
     ))
   }
 
   const handleSubmit = async () => {
     try {
-      // Placeholder for API call to update tasks
-      // await updateStoreTasks(id as string, tasks)
-      setOriginalTasks(tasks)
-      setIsEditing(false)
+      const response = await fetch(`/api/stores/${id}/tasks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(tasks),
+      })
+
+      if (response.ok) {
+        setIsEditing(false)
+        setOriginalTasks(tasks)
+      } else {
+        // Handle error
+        console.error('Failed to update tasks')
+      }
     } catch (error) {
-      console.error('Failed to update tasks:', error)
-      // Handle error (e.g., show error message to user)
+      console.error('Error updating tasks:', error)
     }
   }
 
@@ -90,120 +115,136 @@ export default function StorePage() {
     setIsEditing(false)
   }
 
-  const completedSteps = 3 // For the progress tracker
+  const getProgressPercentage = () => {
+    const completedTasks = tasks.filter(task => task.completed).length
+    return (completedTasks / tasks.length) * 100
+  }
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <DashboardLayout>
       <div className="flex flex-col lg:flex-row gap-8">
-        {/* Left Sidebar */}
+        {/* Store Info Card */}
         <Card className="w-full lg:w-80 bg-gray-800">
           <CardContent className="p-6 space-y-6">
             <div className="flex items-center gap-3">
-              <FontAwesomeIcon icon={faStore} className="text-2xl text-blue-500" />
-              <h2 className="text-2xl font-bold text-white">Store {id}</h2>
+              <FontAwesomeIcon icon={faStore} className="text-2xl text-indigo-500" />
+              <h2 className="text-2xl font-bold text-white">Store {store?.storeNo}</h2>
             </div>
-            <div className="space-y-4 text-white">
-              <div className="flex items-start gap-3">
-                <FontAwesomeIcon icon={faHome} className="mt-1 text-blue-500" />
-                <div>
-                  <p>123 Main st</p>
-                  <p>austin tx -78654</p>
+            {store && (
+              <div className="space-y-4 text-white">
+                <div className="flex items-start gap-3">
+                  <FontAwesomeIcon icon={faHome} className="mt-1 text-indigo-500" />
+                  <div>
+                    <p>{store.address.street}</p>
+                    <p>{store.address.city}, {store.address.state} {store.address.zip}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <FontAwesomeIcon icon={faEnvelope} className="text-indigo-500" />
+                  <p>{store.email}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <FontAwesomeIcon icon={faPhone} className="text-indigo-500" />
+                  <p>{store.phone}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <FontAwesomeIcon icon={faEnvelope} className="text-blue-500" />
-                <p>Jeremy@gmail.com</p>
-              </div>
-              <div className="flex items-center gap-3">
-                <FontAwesomeIcon icon={faPhone} className="text-blue-500" />
-                <p>510-555-5555</p>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Main Content */}
+        {/* Main Content Area */}
         <div className="flex-1 space-y-8">
-          <Card>
+          {/* Progress Tracker */}
+          <Card className="bg-white">
             <CardHeader>
-              <CardTitle>Store Rollout Progress</CardTitle>
+              <CardTitle className="text-lg font-medium">Store Rollout Progress</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="mb-4">
                 <div className="flex justify-between text-sm mb-2">
-                  <div>ORDER #V34XDHR</div>
-                  <div>Expected Arrival 01/12/19</div>
+                  <div className="font-medium">Overall Progress</div>
+                  <div>{getProgressPercentage().toFixed(0)}% Complete</div>
                 </div>
-                <div className="text-xs text-gray-500">
-                  USPS 234094567242423422898
+                <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                  <div className="bg-blue-600 h-2.5 rounded-full" style={{width: `${getProgressPercentage()}%`}}></div>
                 </div>
               </div>
               
-              <div className="relative">
-                <div className="flex justify-between mb-2">
-                  {['Order Processed', 'Order Shipped', 'Order En Route', 'Order Arrived'].map((step, index) => (
-                    <div key={step} className="flex flex-col items-center w-1/4">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-2 
-                        ${index <= completedSteps ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-600'}`}>
-                        <FontAwesomeIcon icon={
-                          index === 0 ? faClipboardCheck :
-                          index === 1 ? faBox :
-                          index === 2 ? faTruck :
-                          faHouse
-                        } />
+              <div className="relative py-4">
+                <div className="flex flex-wrap justify-between mb-2">
+                  {tasks.map((task, index) => (
+                    <div key={task.id} className="flex flex-col items-center w-1/2 sm:w-1/3 md:w-1/4 lg:w-1/5 mb-4">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 
+                        ${task.completed 
+                          ? 'bg-indigo-600 text-white' 
+                          : 'bg-gray-200 text-gray-400'
+                        }`}>
+                        <FontAwesomeIcon 
+                          icon={task.icon}
+                          className={task.completed ? 'text-white' : 'text-gray-400'}
+                        />
                       </div>
-                      <span className="text-sm text-center">{step}</span>
+                      <span className="text-sm text-center font-medium text-gray-600">{task.name}</span>
                     </div>
                   ))}
-                </div>
-                <div className="absolute top-4 left-0 w-full h-0.5 bg-gray-300 -z-10">
-                  <div 
-                    className="h-full bg-blue-500 transition-all duration-500" 
-                    style={{ width: `${(completedSteps / 3) * 100}%` }}
-                  />
                 </div>
               </div>
             </CardContent>
           </Card>
 
+          {/* Tasks Table */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Rollout Tasks</CardTitle>
               {isEditing ? (
                 <div className="space-x-2">
-                  <Button onClick={handleSubmit}>Submit</Button>
-                  <Button onClick={handleCancel} variant="outline">Cancel</Button>
+                  <Button onClick={handleSubmit} className="bg-indigo-600 hover:bg-indigo-700">
+                    Submit
+                  </Button>
+                  <Button onClick={handleCancel} variant="outline">
+                    Cancel
+                  </Button>
                 </div>
               ) : (
-                <Button onClick={() => setIsEditing(true)} variant="outline">Edit</Button>
+                <Button onClick={() => setIsEditing(true)} variant="outline">
+                  Edit
+                </Button>
               )}
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b">
-                      <th className="px-4 py-2 text-left">Task</th>
-                      <th className="px-4 py-2 text-left">Phase</th>
-                      <th className="px-4 py-2 text-left">Team</th>
-                      <th className="px-4 py-2 text-left">Status</th>
+                    <tr className="border-b border-gray-200">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Task
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Phase
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Team
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Status
+                      </th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-gray-200">
                     {tasks.map((task) => (
-                      <tr key={task.id} className="border-b">
-                        <td className="px-4 py-2">
+                      <tr key={task.id}>
+                        <td className="px-4 py-4">
                           <div className="flex items-center gap-3">
-                            <FontAwesomeIcon icon={task.icon} className="text-blue-500" />
-                            <span>{task.name}</span>
+                            <FontAwesomeIcon icon={task.icon} className="text-indigo-500" />
+                            <span className="font-medium text-gray-900">{task.name}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-2">
+                        <td className="px-4 py-4">
                           <select
                             value={task.phase}
                             onChange={(e) => handlePhaseChange(task.id, e.target.value)}
                             disabled={!isEditing}
-                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
                           >
                             {phases.map((phase) => (
                               <option key={phase} value={phase}>
@@ -212,12 +253,12 @@ export default function StorePage() {
                             ))}
                           </select>
                         </td>
-                        <td className="px-4 py-2">
+                        <td className="px-4 py-4">
                           <select
                             value={task.team}
                             onChange={(e) => handleTeamChange(task.id, e.target.value)}
                             disabled={!isEditing}
-                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
                           >
                             {teams.map((team) => (
                               <option key={team} value={team}>
@@ -226,13 +267,14 @@ export default function StorePage() {
                             ))}
                           </select>
                         </td>
-                        <td className="px-4 py-2">
+                        <td className="px-4 py-4">
                           <input
                             type="checkbox"
                             checked={task.completed}
                             onChange={(e) => handleStatusChange(task.id, e.target.checked)}
                             disabled={!isEditing}
-                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                            className="h-5 w-5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded 
+                              disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </td>
                       </tr>
@@ -244,6 +286,29 @@ export default function StorePage() {
           </Card>
         </div>
       </div>
-    </div>
+    </DashboardLayout>
   )
 }
+
+//*stores/[id]/tassks
+
+import { NextApiRequest, NextApiResponse } from 'next'
+import { updateStoreTasks as updateStoreTasksDB } from '@/lib/db'
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'PUT') {
+    const { id } = req.query
+    const tasks = req.body
+
+    try {
+      const result = await updateStoreTasksDB(id as string, tasks)
+      res.status(200).json(result)
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to update store tasks' })
+    }
+  } else {
+    res.setHeader('Allow', ['PUT'])
+    res.status(405).end(`Method ${req.method} Not Allowed`)
+  }
+}
+//*
