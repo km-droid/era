@@ -1,314 +1,262 @@
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/router'
 import DashboardLayout from '@/components/DashboardLayout'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { 
-  faStore, 
-  faHome, 
-  faEnvelope, 
-  faPhone, 
-  faBox,
-  faTruck,
-  faHouse,
-  faClipboardCheck,
-  faNetworkWired,
-  faServer,
-  faDesktop,
-  faBell,
-  faUsers
-} from '@fortawesome/free-solid-svg-icons'
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell, Treemap } from 'recharts'
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 
 interface Task {
-  id: string;
-  name: string;
-  phase: string;
-  team: string;
-  completed: boolean;
-  icon: any; // Replace 'any' with the correct type from @fortawesome/fontawesome-svg-core
+  id: string
+  name: string
+  storeId: string
+  teamId: string
+  status: 'completed' | 'pending'
 }
 
-interface Store {
-  id: string;
-  storeNo: string;
-  address: {
-    street: string;
-    city: string;
-    state: string;
-    zip: string;
-  };
-  email: string;
-  phone: string;
+interface StoreCountByTask {
+  name: string
+  completed: number
+  pending: number
 }
 
-const phases = ['Planning', 'Hardware', 'Software', 'Training', 'Live']
-const teams = ['IT', 'Operations', 'Training', 'Management']
+interface StoreCountByTeam {
+  teamId: string
+  completed: number
+  pending: number
+}
 
-export default function StorePage() {
-  const router = useRouter()
-  const { id } = router.query
-  const [store, setStore] = useState<Store | null>(null)
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [isEditing, setIsEditing] = useState(false)
-  const [originalTasks, setOriginalTasks] = useState<Task[]>([])
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D']
+
+export default function StatsPage() {
+  const [taskStats, setTaskStats] = useState<StoreCountByTask[]>([])
+  const [teamStats, setTeamStats] = useState<StoreCountByTeam[]>([])
 
   useEffect(() => {
-    if (id) {
-      // Fetch store data
-      fetch(`/api/stores/${id}`)
-        .then(res => res.json())
-        .then(data => setStore(data))
+    // Fetch task stats
+    fetch('/api/stats/tasks')
+      .then(res => res.json())
+      .then(data => setTaskStats(data))
 
-      // Fetch tasks data
-      fetch(`/api/stores/${id}/tasks`)
-        .then(res => res.json())
-        .then(data => {
-          setTasks(data)
-          setOriginalTasks(data)
-        })
-    }
-  }, [id])
+    // Fetch team stats
+    fetch('/api/stats/teams')
+      .then(res => res.json())
+      .then(data => setTeamStats(data))
+  }, [])
 
-  const handlePhaseChange = (taskId: string, newPhase: string) => {
-    setTasks(tasks.map(task => 
-      task.id === taskId ? { ...task, phase: newPhase } : task
-    ))
-  }
-
-  const handleTeamChange = (taskId: string, newTeam: string) => {
-    setTasks(tasks.map(task => 
-      task.id === taskId ? { ...task, team: newTeam } : task
-    ))
-  }
-
-  const handleStatusChange = (taskId: string, completed: boolean) => {
-    setTasks(tasks.map(task => 
-      task.id === taskId ? { ...task, completed } : task
-    ))
-  }
-
-  const handleSubmit = async () => {
-    try {
-      const response = await fetch(`/api/stores/${id}/tasks`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(tasks),
-      })
-
-      if (response.ok) {
-        setIsEditing(false)
-        setOriginalTasks(tasks)
-      } else {
-        // Handle error
-        console.error('Failed to update tasks')
-      }
-    } catch (error) {
-      console.error('Error updating tasks:', error)
-    }
-  }
-
-  const handleCancel = () => {
-    setTasks(originalTasks)
-    setIsEditing(false)
-  }
-
-  const getProgressPercentage = () => {
-    const completedTasks = tasks.filter(task => task.completed).length
-    return (completedTasks / tasks.length) * 100
-  }
+  const totalStores = taskStats.reduce((sum, task) => sum + task.completed + task.pending, 0)
 
   return (
     <DashboardLayout>
-      <div className="flex flex-col lg:flex-row gap-8">
-        {/* Store Info Card */}
-        <Card className="w-full lg:w-80 bg-gray-800">
-          <CardContent className="p-6 space-y-6">
-            <div className="flex items-center gap-3">
-              <FontAwesomeIcon icon={faStore} className="text-2xl text-indigo-500" />
-              <h2 className="text-2xl font-bold text-white">Store {store?.storeNo}</h2>
-            </div>
-            {store && (
-              <div className="space-y-4 text-white">
-                <div className="flex items-start gap-3">
-                  <FontAwesomeIcon icon={faHome} className="mt-1 text-indigo-500" />
-                  <div>
-                    <p>{store.address.street}</p>
-                    <p>{store.address.city}, {store.address.state} {store.address.zip}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <FontAwesomeIcon icon={faEnvelope} className="text-indigo-500" />
-                  <p>{store.email}</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <FontAwesomeIcon icon={faPhone} className="text-indigo-500" />
-                  <p>{store.phone}</p>
-                </div>
-              </div>
-            )}
+      <div className="space-y-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Store Count by Task Name and Status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer
+              config={{
+                completed: {
+                  label: "Completed",
+                  color: "hsl(var(--chart-1))",
+                },
+                pending: {
+                  label: "Pending",
+                  color: "hsl(var(--chart-2))",
+                },
+              }}
+              className="h-[400px]"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={taskStats} layout="vertical">
+                  <XAxis type="number" />
+                  <YAxis dataKey="name" type="category" width={150} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend />
+                  <Bar dataKey="completed" stackId="a" fill="var(--color-completed)" />
+                  <Bar dataKey="pending" stackId="a" fill="var(--color-pending)" />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartContainer>
           </CardContent>
         </Card>
 
-        {/* Main Content Area */}
-        <div className="flex-1 space-y-8">
-          {/* Progress Tracker */}
-          <Card className="bg-white">
-            <CardHeader>
-              <CardTitle className="text-lg font-medium">Store Rollout Progress</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="mb-4">
-                <div className="flex justify-between text-sm mb-2">
-                  <div className="font-medium">Overall Progress</div>
-                  <div>{getProgressPercentage().toFixed(0)}% Complete</div>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
-                  <div className="bg-blue-600 h-2.5 rounded-full" style={{width: `${getProgressPercentage()}%`}}></div>
-                </div>
-              </div>
-              
-              <div className="relative py-4">
-                <div className="flex flex-wrap justify-between mb-2">
-                  {tasks.map((task, index) => (
-                    <div key={task.id} className="flex flex-col items-center w-1/2 sm:w-1/3 md:w-1/4 lg:w-1/5 mb-4">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 
-                        ${task.completed 
-                          ? 'bg-indigo-600 text-white' 
-                          : 'bg-gray-200 text-gray-400'
-                        }`}>
-                        <FontAwesomeIcon 
-                          icon={task.icon}
-                          className={task.completed ? 'text-white' : 'text-gray-400'}
-                        />
-                      </div>
-                      <span className="text-sm text-center font-medium text-gray-600">{task.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Store Count by Team and Status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer
+              config={{
+                completed: {
+                  label: "Completed",
+                  color: "hsl(var(--chart-1))",
+                },
+                pending: {
+                  label: "Pending",
+                  color: "hsl(var(--chart-2))",
+                },
+              }}
+              className="h-[400px]"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={teamStats}
+                    dataKey="completed"
+                    nameKey="teamId"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    fill="var(--color-completed)"
+                    label
+                  />
+                  <Pie
+                    data={teamStats}
+                    dataKey="pending"
+                    nameKey="teamId"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={90}
+                    outerRadius={110}
+                    fill="var(--color-pending)"
+                    label
+                  />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </CardContent>
+        </Card>
 
-          {/* Tasks Table */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Rollout Tasks</CardTitle>
-              {isEditing ? (
-                <div className="space-x-2">
-                  <Button onClick={handleSubmit} className="bg-indigo-600 hover:bg-indigo-700">
-                    Submit
-                  </Button>
-                  <Button onClick={handleCancel} variant="outline">
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <Button onClick={() => setIsEditing(true)} variant="outline">
-                  Edit
-                </Button>
-              )}
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Task
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Phase
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Team
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {tasks.map((task) => (
-                      <tr key={task.id}>
-                        <td className="px-4 py-4">
-                          <div className="flex items-center gap-3">
-                            <FontAwesomeIcon icon={task.icon} className="text-indigo-500" />
-                            <span className="font-medium text-gray-900">{task.name}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-4">
-                          <select
-                            value={task.phase}
-                            onChange={(e) => handlePhaseChange(task.id, e.target.value)}
-                            disabled={!isEditing}
-                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
-                          >
-                            {phases.map((phase) => (
-                              <option key={phase} value={phase}>
-                                {phase}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-4 py-4">
-                          <select
-                            value={task.team}
-                            onChange={(e) => handleTeamChange(task.id, e.target.value)}
-                            disabled={!isEditing}
-                            className="w-full border border-gray-300 rounded-md shadow-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
-                          >
-                            {teams.map((team) => (
-                              <option key={team} value={team}>
-                                {team}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-4 py-4">
-                          <input
-                            type="checkbox"
-                            checked={task.completed}
-                            onChange={(e) => handleStatusChange(task.id, e.target.checked)}
-                            disabled={!isEditing}
-                            className="h-5 w-5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded 
-                              disabled:opacity-50 disabled:cursor-not-allowed"
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Task Completion Treemap</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer
+              config={{
+                value: {
+                  label: "Stores",
+                  color: "hsl(var(--chart-1))",
+                },
+              }}
+              className="h-[400px]"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <Treemap
+                  data={taskStats.map(task => ({
+                    name: task.name,
+                    value: task.completed + task.pending,
+                    completed: task.completed,
+                    pending: task.pending,
+                  }))}
+                  dataKey="value"
+                  aspectRatio={4 / 3}
+                  stroke="#fff"
+                  fill="var(--color-value)"
+                >
+                  <Tooltip content={<CustomTreemapTooltip />} />
+                </Treemap>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   )
 }
 
-//*stores/[id]/tassks
+const CustomTreemapTooltip = ({ active, payload }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload
+    return (
+      <div className="bg-white p-2 border border-gray-200 rounded shadow">
+        <p className="font-bold">{data.name}</p>
+        <p>Total Stores: {data.value}</p>
+        <p>Completed: {data.completed}</p>
+        <p>Pending: {data.pending}</p>
+      </div>
+    )
+  }
+  return null
+}
+//* api/stats/tasks
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { PrismaClient } from '@prisma/client'
 
-import { NextApiRequest, NextApiResponse } from 'next'
-import { updateStoreTasks as updateStoreTasksDB } from '@/lib/db'
+const prisma = new PrismaClient()
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method === 'PUT') {
-    const { id } = req.query
-    const tasks = req.body
-
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  if (req.method === 'GET') {
     try {
-      const result = await updateStoreTasksDB(id as string, tasks)
-      res.status(200).json(result)
+      const taskStats = await prisma.task.groupBy({
+        by: ['name'],
+        _count: {
+          _all: true,
+          completed: {
+            where: {
+              completed: true
+            }
+          }
+        }
+      })
+
+      const formattedStats = taskStats.map(stat => ({
+        name: stat.name,
+        completed: stat._count.completed,
+        pending: stat._count._all - stat._count.completed
+      }))
+
+      res.status(200).json(formattedStats)
     } catch (error) {
-      res.status(500).json({ error: 'Failed to update store tasks' })
+      console.error('Error fetching task stats:', error)
+      res.status(500).json({ error: 'Error fetching task stats' })
     }
   } else {
-    res.setHeader('Allow', ['PUT'])
+    res.setHeader('Allow', ['GET'])
     res.status(405).end(`Method ${req.method} Not Allowed`)
   }
 }
-//*
+//*teams
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  if (req.method === 'GET') {
+    try {
+      const teamStats = await prisma.task.groupBy({
+        by: ['teamId'],
+        _count: {
+          _all: true,
+          completed: {
+            where: {
+              completed: true
+            }
+          }
+        }
+      })
+
+      const formattedStats = teamStats.map(stat => ({
+        teamId: stat.teamId,
+        completed: stat._count.completed,
+        pending: stat._count._all - stat._count.completed
+      }))
+
+      res.status(200).json(formattedStats)
+    } catch (error) {
+      console.error('Error fetching team stats:', error)
+      res.status(500).json({ error: 'Error fetching team stats' })
+    }
+  } else {
+    res.setHeader('Allow', ['GET'])
+    res.status(405).end(`Method ${req.method} Not Allowed`)
+  }
+}
