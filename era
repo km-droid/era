@@ -1,72 +1,262 @@
-import React from 'react'
-import { TooltipProps } from 'recharts'
-import { Card, CardContent } from '@/components/ui/card'
+import { useState, useEffect } from 'react'
+import DashboardLayout from '@/components/DashboardLayout'
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell, Treemap } from 'recharts'
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 
-interface ChartConfig {
-  [key: string]: {
-    label: string
-    color: string
-  }
+interface Task {
+  id: string
+  name: string
+  storeId: string
+  teamId: string
+  status: 'completed' | 'pending'
 }
 
-interface ChartContainerProps {
-  config: ChartConfig
-  children: React.ReactNode
-  className?: string
+interface StoreCountByTask {
+  name: string
+  completed: number
+  pending: number
 }
 
-export const ChartContainer: React.FC<ChartContainerProps> = ({
-  config,
-  children,
-  className,
-}) => {
+interface StoreCountByTeam {
+  teamId: string
+  completed: number
+  pending: number
+}
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D']
+
+export default function StatsPage() {
+  const [taskStats, setTaskStats] = useState<StoreCountByTask[]>([])
+  const [teamStats, setTeamStats] = useState<StoreCountByTeam[]>([])
+
+  useEffect(() => {
+    // Fetch task stats
+    fetch('/api/stats/tasks')
+      .then(res => res.json())
+      .then(data => setTaskStats(data))
+
+    // Fetch team stats
+    fetch('/api/stats/teams')
+      .then(res => res.json())
+      .then(data => setTeamStats(data))
+  }, [])
+
+  const totalStores = taskStats.reduce((sum, task) => sum + task.completed + task.pending, 0)
+
   return (
-    <div className={className}>
-      <style jsx>{`
-        :root {
-          ${Object.entries(config)
-            .map(([key, value]) => `--color-${key}: ${value.color};`)
-            .join('\n')}
-        }
-      `}</style>
-      {children}
-    </div>
+    <DashboardLayout>
+      <div className="space-y-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Store Count by Task Name and Status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer
+              config={{
+                completed: {
+                  label: "Completed",
+                  color: "hsl(var(--chart-1))",
+                },
+                pending: {
+                  label: "Pending",
+                  color: "hsl(var(--chart-2))",
+                },
+              }}
+              className="h-[400px]"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={taskStats} layout="vertical">
+                  <XAxis type="number" />
+                  <YAxis dataKey="name" type="category" width={150} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend />
+                  <Bar dataKey="completed" stackId="a" fill="var(--color-completed)" />
+                  <Bar dataKey="pending" stackId="a" fill="var(--color-pending)" />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Store Count by Team and Status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer
+              config={{
+                completed: {
+                  label: "Completed",
+                  color: "hsl(var(--chart-1))",
+                },
+                pending: {
+                  label: "Pending",
+                  color: "hsl(var(--chart-2))",
+                },
+              }}
+              className="h-[400px]"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={teamStats}
+                    dataKey="completed"
+                    nameKey="teamId"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    fill="var(--color-completed)"
+                    label
+                  />
+                  <Pie
+                    data={teamStats}
+                    dataKey="pending"
+                    nameKey="teamId"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={90}
+                    outerRadius={110}
+                    fill="var(--color-pending)"
+                    label
+                  />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Task Completion Treemap</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer
+              config={{
+                value: {
+                  label: "Stores",
+                  color: "hsl(var(--chart-1))",
+                },
+              }}
+              className="h-[400px]"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <Treemap
+                  data={taskStats.map(task => ({
+                    name: task.name,
+                    value: task.completed + task.pending,
+                    completed: task.completed,
+                    pending: task.pending,
+                  }))}
+                  dataKey="value"
+                  aspectRatio={4 / 3}
+                  stroke="#fff"
+                  fill="var(--color-value)"
+                >
+                  <Tooltip content={<CustomTreemapTooltip />} />
+                </Treemap>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardLayout>
   )
 }
 
-export const ChartTooltip: React.FC<TooltipProps<any, any>> = ({ active, payload, label }) => {
+const CustomTreemapTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
+    const data = payload[0].payload
     return (
-      <Card>
-        <CardContent className="p-2">
-          <p className="font-bold">{label}</p>
-          {payload.map((entry, index) => (
-            <p key={`item-${index}`} style={{ color: entry.color }}>
-              {entry.name}: {entry.value}
-            </p>
-          ))}
-        </CardContent>
-      </Card>
+      <div className="bg-white p-2 border border-gray-200 rounded shadow">
+        <p className="font-bold">{data.name}</p>
+        <p>Total Stores: {data.value}</p>
+        <p>Completed: {data.completed}</p>
+        <p>Pending: {data.pending}</p>
+      </div>
     )
   }
-
   return null
 }
+//* api/stats/tasks
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { PrismaClient } from '@prisma/client'
 
-export const ChartTooltipContent: React.FC<TooltipProps<any, any>> = ({ active, payload }) => {
-  if (active && payload && payload.length) {
-    return (
-      <Card>
-        <CardContent className="p-2">
-          {payload.map((entry, index) => (
-            <p key={`item-${index}`} style={{ color: entry.color }}>
-              {entry.name}: {entry.value}
-            </p>
-          ))}
-        </CardContent>
-      </Card>
-    )
+const prisma = new PrismaClient()
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  if (req.method === 'GET') {
+    try {
+      const taskStats = await prisma.task.groupBy({
+        by: ['name'],
+        _count: {
+          _all: true,
+          completed: {
+            where: {
+              completed: true
+            }
+          }
+        }
+      })
+
+      const formattedStats = taskStats.map(stat => ({
+        name: stat.name,
+        completed: stat._count.completed,
+        pending: stat._count._all - stat._count.completed
+      }))
+
+      res.status(200).json(formattedStats)
+    } catch (error) {
+      console.error('Error fetching task stats:', error)
+      res.status(500).json({ error: 'Error fetching task stats' })
+    }
+  } else {
+    res.setHeader('Allow', ['GET'])
+    res.status(405).end(`Method ${req.method} Not Allowed`)
   }
+}
+//*teams
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { PrismaClient } from '@prisma/client'
 
-  return null
+const prisma = new PrismaClient()
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  if (req.method === 'GET') {
+    try {
+      const teamStats = await prisma.task.groupBy({
+        by: ['teamId'],
+        _count: {
+          _all: true,
+          completed: {
+            where: {
+              completed: true
+            }
+          }
+        }
+      })
+
+      const formattedStats = teamStats.map(stat => ({
+        teamId: stat.teamId,
+        completed: stat._count.completed,
+        pending: stat._count._all - stat._count.completed
+      }))
+
+      res.status(200).json(formattedStats)
+    } catch (error) {
+      console.error('Error fetching team stats:', error)
+      res.status(500).json({ error: 'Error fetching team stats' })
+    }
+  } else {
+    res.setHeader('Allow', ['GET'])
+    res.status(405).end(`Method ${req.method} Not Allowed`)
+  }
 }
