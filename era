@@ -1,309 +1,1076 @@
+//* stucture
+service-catalog/
+├── components/
+│   └── Layout.tsx
+├── lib/
+│   ├── api.ts
+│   └── db.ts
+├── pages/
+│   ├── api/
+│   │   ├── services/
+│   │   │   ├── [appName].ts
+│   │   │   ├── [appName]/
+│   │   │   │   └── health.ts
+│   │   │   └── index.ts
+│   ├── app/
+│   │   └── [appName].tsx
+│   ├── _app.tsx
+│   ├── index.tsx
+│   └── onboard.tsx
+├── public/
+├── scripts/
+│   └── seedTestData.ts
+├── styles/
+│   └── globals.css
+├── types/
+│   └── index.ts
+├── .env.local
+├── next.config.js
+├── package.json
+├── README.md
+├── tailwind.config.js
+└── tsconfig.json
+
+//*
+npx create-next-app@latest service-catalog --typescript
+cd service-catalog
+
+//* 
+npm install @google-cloud/datastore @fortawesome/fontawesome-svg-core @fortawesome/free-solid-svg-icons @fortawesome/react-fontawesome recharts tailwindcss @tailwindcss/forms
+
+//*  module.exports = {
+  content: [
+    "./pages/**/*.{js,ts,jsx,tsx}",
+    "./components/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [require('@tailwindcss/forms')],
+}
+
+//*
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+//* layout.tsx
 import React from 'react'
-import { GetServerSideProps } from 'next'
-import { useQuery } from '@tanstack/react-query'
-import DashboardLayout from '@/components/DashboardLayout'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell, Treemap } from 'recharts'
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-import { getStoreStats } from '@/lib/api'
-import { getStoreStats as getServerSideStats } from '@/lib/db'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faHome, faPlus, faUser } from '@fortawesome/free-solid-svg-icons'
+import Link from 'next/link'
 
-interface StoreCountByTask {
-  name: string
-  completed: number
-  pending: number
+interface LayoutProps {
+  children: React.ReactNode
+  username: string
 }
 
-interface StoreCountByTeam {
-  teamId: string
-  completed: number
-  pending: number
-}
-
-interface StoreStats {
-  totalStores: number
-  storesByStatus: { [key: string]: number }
-  storesByPhase: { [key: string]: number }
-}
-
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D']
-
-export const getServerSideProps: GetServerSideProps = async () => {
-  const initialStats = await getServerSideStats()
-  return { props: { initialStats } }
-}
-
-export default function StatsPage({ initialStats }) {
-  const { data: storeStats, isLoading, error } = useQuery({ 
-    queryKey: ['storeStats'], 
-    queryFn: getStoreStats,
-    initialData: initialStats,
-  })
-
-  const [taskStats, setTaskStats] = React.useState<StoreCountByTask[]>([])
-  const [teamStats, setTeamStats] = React.useState<StoreCountByTeam[]>([])
-
-  React.useEffect(() => {
-    // Fetch task stats
-    fetch('/api/stats/tasks')
-      .then(res => res.json())
-      .then(data => setTaskStats(data))
-
-    // Fetch team stats
-    fetch('/api/stats/teams')
-      .then(res => res.json())
-      .then(data => setTeamStats(data))
-  }, [])
-
-  const statusChartData = React.useMemo(() => {
-    if (!storeStats) return []
-    return Object.entries(storeStats.storesByStatus).map(([status, count]) => ({
-      name: status,
-      value: count,
-    }))
-  }, [storeStats])
-
-  const phaseChartData = React.useMemo(() => {
-    if (!storeStats) return []
-    return Object.entries(storeStats.storesByPhase).map(([phase, count]) => ({
-      name: phase,
-      value: count,
-    }))
-  }, [storeStats])
-
-  if (isLoading) return <DashboardLayout><div>Loading...</div></DashboardLayout>
-  if (error) return <DashboardLayout><div>Error loading stats</div></DashboardLayout>
-
+export default function Layout({ children, username }: LayoutProps) {
   return (
-    <DashboardLayout>
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-800">Store Rollout Statistics</h1>
-
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Stores</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{storeStats?.totalStores ?? 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Live Stores</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{storeStats?.storesByStatus['Live'] ?? 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Onboarded</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{storeStats?.storesByStatus['Onboarded'] ?? 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Completion Rate</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {storeStats?.totalStores ? ((storeStats.storesByStatus['Live'] / storeStats.totalStores) * 100).toFixed(1) : 0}%
-              </div>
-            </CardContent>
-          </Card>
+    <div className="min-h-screen flex flex-col">
+      <header className="bg-primary text-primary-foreground shadow-md">
+        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+          <div className="flex items-center space-x-4">
+            <Link href="/" className="text-xl font-bold hover:text-accent transition-colors">
+              <FontAwesomeIcon icon={faHome} className="mr-2" />
+              Home
+            </Link>
+            <Link href="/onboard" className="text-xl font-bold hover:text-accent transition-colors">
+              <FontAwesomeIcon icon={faPlus} className="mr-2" />
+              Onboard
+            </Link>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-lg">{username}</span>
+            <FontAwesomeIcon icon={faUser} className="text-2xl" />
+          </div>
         </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Stores by Status</CardTitle>
-            <CardDescription>Distribution of stores across different statuses</CardDescription>
-          </CardHeader>
-          <CardContent className="pl-2">
-            <ResponsiveContainer width="100%" height={350}>
-              <BarChart data={statusChartData}>
-                <XAxis
-                  dataKey="name"
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value}`}
-                />
-                <Bar dataKey="value" fill="#adfa1d" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Stores by Rollout Phase</CardTitle>
-            <CardDescription>Distribution of stores across different rollout phases</CardDescription>
-          </CardHeader>
-          <CardContent className="pl-2">
-            <ResponsiveContainer width="100%" height={350}>
-              <BarChart data={phaseChartData}>
-                <XAxis
-                  dataKey="name"
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  stroke="#888888"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value}`}
-                />
-                <Bar dataKey="value" fill="#22c55e" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Store Count by Task Name and Status</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer
-              config={{
-                completed: {
-                  label: "Completed",
-                  color: "hsl(152, 57%, 58%)",
-                },
-                pending: {
-                  label: "Pending",
-                  color: "hsl(322, 65%, 55%)",
-                },
-              }}
-              className="h-[400px]"
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={taskStats} layout="vertical">
-                  <XAxis type="number" />
-                  <YAxis dataKey="name" type="category" width={150} />
-                  <Tooltip content={<ChartTooltipContent />} />
-                  <Legend />
-                  <Bar dataKey="completed" stackId="a" fill="var(--color-completed)" />
-                  <Bar dataKey="pending" stackId="a" fill="var(--color-pending)" />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Store Count by Team and Status</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer
-              config={{
-                completed: {
-                  label: "Completed",
-                  color: "hsl(152, 57%, 58%)",
-                },
-                pending: {
-                  label: "Pending",
-                  color: "hsl(322, 65%, 55%)",
-                },
-              }}
-              className="h-[400px]"
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={teamStats}
-                    dataKey="completed"
-                    nameKey="teamId"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    fill="var(--color-completed)"
-                    label
-                  />
-                  <Pie
-                    data={teamStats}
-                    dataKey="pending"
-                    nameKey="teamId"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={90}
-                    outerRadius={110}
-                    fill="var(--color-pending)"
-                    label
-                  />
-                  <Tooltip content={<ChartTooltipContent />} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Task Completion Treemap</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer
-              config={{
-                value: {
-                  label: "Stores",
-                  color: "hsl(215, 79%, 51%)",
-                },
-              }}
-              className="h-[400px]"
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <Treemap
-                  data={taskStats.map(task => ({
-                    name: task.name,
-                    value: task.completed + task.pending,
-                    completed: task.completed,
-                    pending: task.pending,
-                  }))}
-                  dataKey="value"
-                  aspectRatio={4 / 3}
-                  stroke="#fff"
-                  fill="var(--color-value)"
-                >
-                  <Tooltip content={<CustomTreemapTooltip />} />
-                </Treemap>
-              </ResponsiveContainer>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-      </div>
-    </DashboardLayout>
+      </header>
+      <main className="flex-grow container mx-auto px-4 py-8">
+        {children}
+      </main>
+    </div>
   )
 }
 
-const CustomTreemapTooltip = ({ active, payload }: any) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload
-    return (
-      <Card>
-        <CardContent className="p-2">
-          <p className="font-bold">{data.name}</p>
-          <p>Total Stores: {data.value}</p>
-          <p>Completed: {data.completed}</p>
-          <p>Pending: {data.pending}</p>
-        </CardContent>
-      </Card>
-    )
+//*index.tsx
+import React, { useState, useEffect } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faSearch, faEye, faPlus } from '@fortawesome/free-solid-svg-icons'
+import Link from 'next/link'
+import Layout from '../components/Layout'
+import { ServiceCatalog } from '../types'
+
+export default function Home() {
+  const [services, setServices] = useState<ServiceCatalog[]>([])
+  const [searchTerm, setSearchTerm] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchServices()
+  }, [])
+
+  const fetchServices = async () => {
+    try {
+      const response = await fetch('/api/services')
+      if (!response.ok) {
+        throw new Error('Failed to fetch services')
+      }
+      const data = await response.json()
+      setServices(data)
+      setLoading(false)
+    } catch (err) {
+      setError('Error fetching services. Please try again later.')
+      setLoading(false)
+    }
   }
-  return null
+
+  const filteredServices = services.filter(service =>
+    Object.values(service).some(value =>
+      value.toString().toLowerCase().includes(searchTerm.toLowerCase())
+    )
+  )
+
+  return (
+    <Layout username="John Doe">
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold">Service Catalog</h1>
+          <Link
+            href="/onboard"
+            className="bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors"
+          >
+            <FontAwesomeIcon icon={faPlus} className="mr-2" />
+            Onboard
+          </Link>
+        </div>
+
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Search services..."
+            className="w-full pl-10 pr-4 py-2 border rounded-md"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <FontAwesomeIcon icon={faSearch} className="absolute left-3 top-3 text-gray-400" />
+        </div>
+
+        {loading ? (
+          <div className="text-center">Loading...</div>
+        ) : error ? (
+          <div className="text-center text-red-500">{error}</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-muted">
+                  <th className="p-2 text-left">App Name</th>
+                  <th className="p-2 text-left">Type</th>
+                  <th className="p-2 text-left">Domain</th>
+                  <th className="p-2 text-left">Tier</th>
+                  <th className="p-2 text-left">Infra Type</th>
+                  <th className="p-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredServices.map((service) => (
+                  <tr key={service.appName} className="border-b hover:bg-muted/50">
+                    <td className="p-2">{service.appName}</td>
+                    <td className="p-2">{service.type}</td>
+                    <td className="p-2">{service.domain}</td>
+                    <td className="p-2">{service.tier}</td>
+                    <td className="p-2">{service.infraType}</td>
+                    <td className="p-2">
+                      <Link
+                        href={`/app/${service.appName}`}
+                        className="text-primary hover:text-primary/80 transition-colors"
+                      >
+                        <FontAwesomeIcon icon={faEye} className="mr-1" />
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Layout>
+  )
+}
+//*[appname].tsx
+import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/router'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faArrowLeft, faInfoCircle, faCopy, faCircle } from '@fortawesome/free-solid-svg-icons'
+import Link from 'next/link'
+import Layout from '../../components/Layout'
+import { ServiceCatalog, ServiceHealth } from '../../types'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+
+export default function AppDetails() {
+  const router = useRouter()
+  const { appName } = router.query
+
+  const [activeTab, setActiveTab] = useState('overview')
+  const [appDetails, setAppDetails] = useState<ServiceCatalog | null>(null)
+  const [healthData, setHealthData] = useState<ServiceHealth[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (appName) {
+      fetchAppDetails()
+      fetchHealthData()
+    }
+  }, [appName])
+
+  const fetchAppDetails = async () => {
+    try {
+      const response = await fetch(`/api/services/${appName}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch app details')
+      }
+      const data = await response.json()
+      setAppDetails(data)
+      setLoading(false)
+    } catch (err) {
+      setError('Error fetching app details. Please try again later.')
+      setLoading(false)
+    }
+  }
+
+  const fetchHealthData = async () => {
+    try {
+      const response = await fetch(`/api/services/${appName}/health`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch health data')
+      }
+      const data = await response.json()
+      setHealthData(data)
+    } catch (err) {
+      console.error('Error fetching health data:', err)
+    }
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+      .then(() => alert('Copied to clipboard!'))
+      .catch(err => console.error('Failed to copy:', err))
+  }
+
+  if (loading) return <Layout username="John Doe"><div>Loading...</div></Layout>
+  if (error) return <Layout username="John Doe"><div className="text-red-500">{error}</div></Layout>
+  if (!appDetails) return <Layout username="John Doe"><div>App not found</div></Layout>
+
+  return (
+    <Layout username="John Doe">
+      <div className="space-y-6">
+        <div className="flex items-center space-x-4">
+          <Link href="/" className="text-primary hover:text-primary/80 transition-colors">
+            <FontAwesomeIcon icon={faArrowLeft} className="mr-2" />
+            Back
+          </Link>
+          <h1 className="text-3xl font-bold">{appDetails.appName}</h1>
+        </div>
+
+        <div className="border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            {['Overview', 'SLOs', 'Useful Links', 'Dependencies', 'Health'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab.toLowerCase().replace(' ', '-'))}
+                className={`${
+                  activeTab === tab.toLowerCase().replace(' ', '-')
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-primary hover:border-primary'
+                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                {tab}
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        {activeTab === 'overview' && (
+          <div className="space-y-4">
+            <table className="w-full">
+              <tbody>
+                {Object.entries(appDetails).map(([key, value]) => (
+                  <tr key={key} className="hover:bg-muted/50">
+                    <td className="py-2 font-medium">{key}</td>
+                    <td className="py-2">
+                      {key === 'appDescription' || key === 'impact' ? (
+                        <div className="relative group">
+                          <FontAwesomeIcon icon={faInfoCircle} className="text-primary cursor-pointer" />
+                          <div className="absolute z-10 invisible group-hover:visible bg-muted text-muted-foreground p-2 rounded shadow-lg">
+                            {value as string}
+                          </div>
+                        </div>
+                      ) : Array.isArray(value) ? (
+                        value.join(', ')
+                      ) : (
+                        value as string
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'slos' && (
+          <div className="space-y-4">
+            <table className="w-full">
+              <tbody>
+                {Object.entries(appDetails.slos).map(([key, value]) => (
+                  <tr key={key} className="hover:bg-muted/50">
+                    <td className="py-2 font-medium">{key}</td>
+                    <td className="py-2">{value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'useful-links' && (
+          <div className="space-y-4">
+            <table className="w-full">
+              <tbody>
+                {Object.entries(appDetails.usefulLinks).map(([key, value]) => (
+                  <tr key={key} className="hover:bg-muted/50 group">
+                    <td className="py-2 font-medium">{key}</td>
+                    <td className="py-2">
+                      <a href={value} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                        {value}
+                      </a>
+                    </td>
+                    <td className="py-2">
+                      <FontAwesomeIcon
+                        icon={faCopy}
+                        className="text-muted-foreground cursor-pointer invisible group-hover:visible"
+                        onClick={() => copyToClipboard(value)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'dependencies' && (
+          <div className="space-y-4">
+            <ul>
+              {appDetails.dependencies.map((dep) => (
+                <li key={dep} className="flex items-center space-x-2 py-2 hover:bg-muted/50">
+                  <FontAwesomeIcon icon={faCircle} className="text-primary text-xs" />
+                  <span>{dep}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {activeTab === 'health' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-muted p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">Healthy</h3>
+                <div className="text-3xl font-bold text-green-500">
+                  {healthData[healthData.length - 1]?.status === 'healthy' ? 'Yes' : 'No'}
+                  <span className="text-sm ml-2">
+                    {healthData[healthData.length - 1]?.status === 'healthy' ? (
+                      <FontAwesomeIcon icon={faArrowLeft} className="text-green-500" />
+                    ) : (
+                      <FontAwesomeIcon icon={faArrowLeft} className="text-red-500" />
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="bg-muted p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">Error Budget</h3>
+                <div className="text-3xl font-bold text-primary">
+                  {healthData[healthData.length - 1]?.errorBudget.toFixed(2)}%
+                  <span className="text-sm ml-2">
+                    {healthData[healthData.length - 1]?.errorBudget > healthData[healthData.length - 2]?.errorBudget ? (
+                      <FontAwesomeIcon icon={faArrowLeft} className="text-green-500" />
+                    ) : (
+                      <FontAwesomeIcon icon={faArrowLeft} className="text-red-500" />
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={healthData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="timestamp" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="metrics.volume" stroke="#8884d8" name="Volume" />
+                  <Line type="monotone" dataKey="metrics.availability" stroke="#82ca9d" name="Availability" />
+                  <Line type="monotone" dataKey="metrics.latency" stroke="#ffc658" name="Latency" />
+                  <Line type="monotone" dataKey="metrics.errors" stroke="#ff8042" name="Errors" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </div>
+    </Layout>
+  )
+}
+
+//*onboard.tsx
+import React, { useState } from 'react'
+import { useRouter } from 'next/router'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faSave } from '@fortawesome/free-solid-svg-icons'
+import Layout from '../components/Layout'
+import { ServiceCatalog } from '../types'
+
+export default function Onboard() {
+  const router = useRouter()
+  const [formData, setFormData] = useState<Partial<ServiceCatalog>>({
+    appName: '',
+    appDescription: '',
+    type: '',
+    domain: '',
+    tier: '',
+    infraType: '',
+    lifecycle: '',
+    impact: '',
+    googleProjectName: '',
+    devContacts: [],
+    sreContacts: [],
+    slos: {
+      volume: 0,
+      availability: 0,
+      latency: 0,
+      errors: 0,
+    },
+    usefulLinks: {},
+    dependencies: [],
+  })
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target
+    setFormData((prev) => ({ ...prev, [name]: value }))
+  }
+
+  const handleArrayInputChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'devContacts' | 'sreContacts' | 'dependencies') => {
+    const values = e.target.value.split(',').map((item) => item.trim())
+    setFormData((prev) => ({ ...prev, [field]: values }))
+  }
+
+  const handleSLOChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
+    setFormData((prev) => ({
+      ...prev,
+      slos: { ...prev.slos, [name]: parseFloat(value) },
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch('/api/services', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create service')
+      }
+
+      router.push('/')
+    } catch (err) {
+      setError('Error creating service. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Layout username="John Doe">
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-3xl font-bold mb-6">Onboard New Service</h1>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="appName" className="block text-sm font-medium text-muted-foreground">
+              App Name
+            </label>
+            <input
+              type="text"
+              id="appName"
+              name="appName"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.appName}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="appDescription" className="block text-sm font-medium text-muted-foreground">
+              App Description
+            </label>
+            <textarea
+              id="appDescription"
+              name="appDescription"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.appDescription}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="type" className="block text-sm font-medium text-muted-foreground">
+              Type
+            </label>
+            <input
+              type="text"
+              id="type"
+              name="type"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.type}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="domain" className="block text-sm font-medium text-muted-foreground">
+              Domain
+            </label>
+            <input
+              type="text"
+              id="domain"
+              name="domain"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.domain}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="tier" className="block text-sm font-medium text-muted-foreground">
+              Tier
+            </label>
+            <input
+              type="text"
+              id="tier"
+              name="tier"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.tier}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="infraType" className="block text-sm font-medium text-muted-foreground">
+              Infra Type
+            </label>
+            <input
+              type="text"
+              id="infraType"
+              name="infraType"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.infraType}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="lifecycle" className="block text-sm font-medium text-muted-foreground">
+              Lifecycle
+            </label>
+            <input
+              type="text"
+              id="lifecycle"
+              name="lifecycle"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.lifecycle}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="impact" className="block text-sm font-medium text-muted-foreground">
+              Impact
+            </label>
+            <input
+              type="text"
+              id="impact"
+              name="impact"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.impact}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="googleProjectName" className="block text-sm font-medium text-muted-foreground">
+              Google Project Name
+            </label>
+            <input
+              type="text"
+              id="googleProjectName"
+              name="googleProjectName"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.googleProjectName}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="devContacts" className="block text-sm font-medium text-muted-foreground">
+              Dev Contacts (comma-separated)
+            </label>
+            <input
+              type="text"
+              id="devContacts"
+              name="devContacts"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.devContacts?.join(', ')}
+              onChange={(e) => handleArrayInputChange(e, 'devContacts')}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="sreContacts" className="block text-sm font-medium text-muted-foreground">
+              SRE Contacts (comma-separated)
+            </label>
+            <input
+              type="text"
+              id="sreContacts"
+              name="sreContacts"
+              required
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.sreContacts?.join(', ')}
+              onChange={(e) => handleArrayInputChange(e, 'sreContacts')}
+            />
+          </div>
+
+          <div>
+            <h3 className="text-lg font-medium mb-2">SLOs</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="volume" className="block text-sm font-medium text-muted-foreground">
+                  Volume
+                </label>
+                <input
+                  type="number"
+                  id="volume"
+                  name="volume"
+                  required
+                  className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+                  value={formData.slos?.volume}
+                  onChange={handleSLOChange}
+                />
+              </div>
+              <div>
+                <label htmlFor="availability" className="block text-sm font-medium text-muted-foreground">
+                  Availability
+                </label>
+                <input
+                  type="number"
+                  id="availability"
+                  name="availability"
+                  required
+                  className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+                  value={formData.slos?.availability}
+                  onChange={handleSLOChange}
+                />
+              </div>
+              <div>
+                <label htmlFor="latency" className="block text-sm font-medium text-muted-foreground">
+                  Latency
+                </label>
+                <input
+                  type="number"
+                  id="latency"
+                  name="latency"
+                  required
+                  className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+                  value={formData.slos?.latency}
+                  onChange={handleSLOChange}
+                />
+              </div>
+              <div>
+                <label htmlFor="errors" className="block text-sm font-medium text-muted-foreground">
+                  Errors
+                </label>
+                <input
+                  type="number"
+                  id="errors"
+                  name="errors"
+                  required
+                  className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+                  value={formData.slos?.errors}
+                  onChange={handleSLOChange}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="dependencies" className="block text-sm font-medium text-muted-foreground">
+              Dependencies (comma-separated)
+            </label>
+            <input
+              type="text"
+              id="dependencies"
+              name="dependencies"
+              className="mt-1 block w-full rounded-md border-muted shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50"
+              value={formData.dependencies?.join(', ')}
+              onChange={(e) => handleArrayInputChange(e, 'dependencies')}
+            />
+          </div>
+
+          {error && <div className="text-red-500">{error}</div>}
+
+          <div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+            >
+              <FontAwesomeIcon icon={faSave} className="mr-2" />
+              {loading ? 'Saving...' : 'Save Service'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </Layout>
+  )
+}
+
+//*db.ts
+import { Datastore } from '@google-cloud/datastore';
+
+const datastore = new Datastore();
+
+export interface ServiceCatalog {
+  appName: string;
+  appDescription: string;
+  type: string;
+  domain: string;
+  tier: string;
+  infraType: string;
+  lifecycle: string;
+  impact: string;
+  googleProjectName: string;
+  devContacts: string[];
+  sreContacts: string[];
+  slos: {
+    volume: number;
+    availability: number;
+    latency: number;
+    errors: number;
+  };
+  usefulLinks: Record<string, string>;
+  dependencies: string[];
+}
+
+export interface ServiceHealth {
+  appName: string;
+  timestamp: Date;
+  metrics: {
+    volume: number;
+    availability: number;
+    latency: number;
+    errors: number;
+  };
+  errorBudget: number;
+  status: 'healthy' | 'warning' | 'error';
+}
+
+const KIND_SERVICE = 'ServiceCatalog';
+const KIND_HEALTH = 'ServiceHealth';
+
+export async function getAllServices(): Promise<ServiceCatalog[]> {
+  const query = datastore.createQuery(KIND_SERVICE);
+  const [services] = await datastore.runQuery(query);
+  return services.map((service) => service as ServiceCatalog);
+}
+
+export async function getServiceByName(appName: string): Promise<ServiceCatalog | null> {
+  const key = datastore.key([KIND_SERVICE, appName]);
+  const [service] = await datastore.get(key);
+  return service ? (service as ServiceCatalog) : null;
+}
+
+export async function createService(service: ServiceCatalog): Promise<void> {
+  const key = datastore.key([KIND_SERVICE, service.appName]);
+  await datastore.save({ key, data: service });
+}
+
+export async function updateService(service: ServiceCatalog): Promise<void> {
+  const key = datastore.key([KIND_SERVICE, service.appName]);
+  await datastore.update({ key, data: service });
+}
+
+export async function deleteService(appName: string): Promise<void> {
+  const key = datastore.key([KIND_SERVICE, appName]);
+  await datastore.delete(key);
+}
+
+export async function getServiceHealth(appName: string, days: number = 7): Promise<ServiceHealth[]> {
+  const query = datastore
+    .createQuery(KIND_HEALTH)
+    .filter('appName', '=', appName)
+    .filter('timestamp', '>', new Date(Date.now() - days * 24 * 60 * 60 * 1000))
+    .order('timestamp');
+
+  const [healthData] = await datastore.runQuery(query);
+  return healthData.map((data) => data as ServiceHealth);
+}
+
+export async function addServiceHealth(health: ServiceHealth): Promise<void> {
+  const key = datastore.key(KIND_HEALTH);
+  await datastore.save({ key, data: health });
+}
+
+//*api.ts
+import {
+  ServiceCatalog,
+  ServiceHealth,
+  getAllServices,
+  getServiceByName,
+  createService,
+  updateService,
+  deleteService,
+  getServiceHealth,
+  addServiceHealth,
+} from './db';
+
+export async function fetchAllServices(): Promise<ServiceCatalog[]> {
+  try {
+    return await getAllServices();
+  } catch (error) {
+    console.error('Error fetching all services:', error);
+    throw new Error('Failed to fetch services');
+  }
+}
+
+export async function fetchServiceByName(appName: string): Promise<ServiceCatalog | null> {
+  try {
+    return await getServiceByName(appName);
+  } catch (error) {
+    console.error(`Error fetching service ${appName}:`, error);
+    throw new Error('Failed to fetch service');
+  }
+}
+
+export async function createNewService(service: ServiceCatalog): Promise<void> {
+  try {
+    await createService(service);
+  } catch (error) {
+    console.error('Error creating new service:', error);
+    throw new Error('Failed to create service');
+  }
+}
+
+export async function updateExistingService(service: ServiceCatalog): Promise<void> {
+  try {
+    await updateService(service);
+  } catch (error) {
+    console.error('Error updating service:', error);
+    throw new Error('Failed to update service');
+  }
+}
+
+export async function removeService(appName: string): Promise<void> {
+  try {
+    await deleteService(appName);
+  } catch (error) {
+    console.error(`Error deleting service ${appName}:`, error);
+    throw new Error('Failed to delete service');
+  }
+}
+
+export async function fetchServiceHealth(appName: string, days: number = 7): Promise<ServiceHealth[]> {
+  try {
+    return await getServiceHealth(appName, days);
+  } catch (error) {
+    console.error(`Error fetching health data for ${appName}:`, error);
+    throw new Error('Failed to fetch service health data');
+  }
+}
+
+export async function addNewServiceHealth(health: ServiceHealth): Promise<void> {
+  try {
+    await addServiceHealth(health);
+  } catch (error) {
+    console.error('Error adding new health data:', error);
+    throw new Error('Failed to add service health data');
+  }
+}
+//*types/index.ts
+export interface ServiceCatalog {
+  appName: string;
+  appDescription: string;
+  type: string;
+  domain: string;
+  tier: string;
+  infraType: string;
+  lifecycle: string;
+  impact: string;
+  googleProjectName: string;
+  devContacts: string[];
+  sreContacts: string[];
+  slos: {
+    volume: number;
+    availability: number;
+    latency: number;
+    errors: number;
+  };
+  usefulLinks: Record<string, string>;
+  dependencies: string[];
+}
+
+export interface ServiceHealth {
+  appName: string;
+  timestamp: Date;
+  metrics: {
+    volume: number;
+    availability: number;
+    latency: number;
+    errors: number;
+  };
+  errorBudget: number;
+  status: 'healthy' | 'warning' | 'error';
+}
+//*api/services/index.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { fetchAllServices, createNewService } from '../../../lib/api';
+import { ServiceCatalog } from '../../../types';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'GET') {
+    try {
+      const services = await fetchAllServices();
+      res.status(200).json(services);
+    } catch (error) {
+      console.error('Error fetching services:', error);
+      res.status(500).json({ message: 'Error fetching services' });
+    }
+  } else if (req.method === 'POST') {
+    try {
+      const newService = req.body as ServiceCatalog;
+      await createNewService(newService);
+      res.status(201).json({ message: 'Service created successfully' });
+    } catch (error) {
+      console.error('Error creating service:', error);
+      res.status(500).json({ message: 'Error creating service' });
+    }
+  } else {
+    res.setHeader('Allow', ['GET', 'POST']);
+    res.status(405).end(`Method ${req.method} Not Allowed`);
+  }
+}
+//*api/sercices/[appname].ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { fetchServiceByName, updateExistingService, removeService } from '../../../lib/api';
+import { ServiceCatalog } from '../../../types';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { appName } = req.query;
+
+  if (typeof appName !== 'string') {
+    return res.status(400).json({ message: 'Invalid appName' });
+  }
+
+  if (req.method === 'GET') {
+    try {
+      const service = await fetchServiceByName(appName);
+      if (service) {
+        res.status(200).json(service);
+      } else {
+        res.status(404).json({ message: 'Service not found' });
+      }
+    } catch (error) {
+      console.error('Error fetching service:', error);
+      res.status(500).json({ message: 'Error fetching service' });
+    }
+  } else if (req.method === 'PUT') {
+    try {
+      const updatedService = req.body as ServiceCatalog;
+      await updateExistingService(updatedService);
+      res.status(200).json({ message: 'Service updated successfully' });
+    } catch (error) {
+      console.error('Error updating service:', error);
+      res.status(500).json({ message: 'Error updating service' });
+    }
+  } else if (req.method === 'DELETE') {
+    try {
+      await removeService(appName);
+      res.status(200).json({ message: 'Service deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting service:', error);
+      res.status(500).json({ message: 'Error deleting service' });
+    }
+  } else {
+    res.setHeader('Allow', ['GET', 'PUT', 'DELETE']);
+    res.status(405).end(`Method ${req.method} Not Allowed`);
+  }
+}
+//*health.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+import { fetchServiceHealth, addNewServiceHealth } from '../../../../lib/api';
+import { ServiceHealth } from '../../../../types';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { appName } = req.query;
+
+  if (typeof appName !== 'string') {
+    return res.status(400).json({ message: 'Invalid appName' });
+  }
+
+  if (req.method === 'GET') {
+    try {
+      const healthData = await fetchServiceHealth(appName);
+      res.status(200).json(healthData);
+    } catch (error) {
+      console.error('Error fetching service health data:', error);
+      res.status(500).json({ message: 'Error fetching service health data' });
+    }
+  } else if (req.method === 'POST') {
+    try {
+      const newHealthData = req.body as ServiceHealth;
+      await addNewServiceHealth(newHealthData);
+      res.status(201).json({ message: 'Health data added successfully' });
+    } catch (error) {
+      console.error('Error adding health data:', error);
+      res.status(500).json({ message: 'Error adding health data' });
+    }
+  } else {
+    res.setHeader('Allow', ['GET', 'POST']);
+    res.status(405).end(`Method ${req.method} Not Allowed`);
+  }
 }
