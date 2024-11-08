@@ -1,3 +1,63 @@
+import datastore from './datastoreClient';
+import type { ServiceCatalog, ServiceHealth } from '../types';
+
+export type { ServiceCatalog, ServiceHealth };
+
+export async function getAllServices(): Promise<ServiceCatalog[]> {
+  console.log('getAllServices: Starting...');
+  try {
+    console.log('getAllServices: Creating Datastore query...');
+    const query = datastore.createQuery('ServiceCatalog');
+    
+    console.log('getAllServices: Executing Datastore query...');
+    
+    const queryPromise = datastore.runQuery(query);
+    
+    // Add a timeout to the query execution
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Query execution timed out')), 10000)
+    );
+
+    const [entities] = await Promise.race([queryPromise, timeoutPromise]) as [any[], any];
+    
+    console.log(`getAllServices: Query executed. Received ${entities ? entities.length : 0} entities.`);
+
+    if (!entities || entities.length === 0) {
+      console.log('getAllServices: No services found in Datastore');
+      return [];
+    }
+
+    const services = entities.map((entity) => {
+      if (!entity) {
+        console.warn('getAllServices: Encountered null entity in Datastore results');
+        return null;
+      }
+
+      const { [datastore.KEY]: key, ...data } = entity;
+      if (!key || !key.name) {
+        console.warn('getAllServices: Encountered entity without a valid key', entity);
+        return null;
+      }
+
+      return { ...data, appName: key.name } as ServiceCatalog;
+    }).filter((service): service is ServiceCatalog => service !== null);
+
+    console.log(`getAllServices: Processed ${services.length} valid services`);
+    return services;
+  } catch (error) {
+    console.error('getAllServices: Error fetching services from Datastore:', error);
+    if (error instanceof Error) {
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
+    throw new Error('Failed to fetch services');
+  }
+}
+
+// ... rest of the file remains unchanged
+
+
 import { Datastore } from '@google-cloud/datastore';
 
 let datastore: Datastore;
