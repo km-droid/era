@@ -1,175 +1,29 @@
-package main
+import { Datastore } from '@google-cloud/datastore';
 
-import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "log"
+let datastore: Datastore;
 
-    "cloud.google.com/go/datastore"
-    "google.golang.org/api/iterator"
-)
+try {
+  console.log('Initializing Datastore client...');
+  console.log('DATASTORE_PROJECT_ID:', process.env.DATASTORE_PROJECT_ID);
+  console.log('DATASTORE_EMULATOR_HOST:', process.env.DATASTORE_EMULATOR_HOST);
+  console.log('GOOGLE_CLOUD_PROJECT:', process.env.GOOGLE_CLOUD_PROJECT);
 
-// SLOs represents the Service Level Objectives embedded entity
-type SLOs struct {
-    Volume       float64 `datastore:"volume"`
-    Availability float64 `datastore:"availability"`
-    Latency      float64 `datastore:"latency"`
-    Errors       float64 `datastore:"errors"`
+  if (process.env.NODE_ENV === 'development' && process.env.DATASTORE_EMULATOR_HOST) {
+    datastore = new Datastore({
+      projectId: process.env.GOOGLE_CLOUD_PROJECT,
+      apiEndpoint: process.env.DATASTORE_EMULATOR_HOST,
+    });
+    console.log('Datastore client initialized for emulator');
+  } else {
+    datastore = new Datastore();
+    console.log('Datastore client initialized for production');
+  }
+} catch (error) {
+  console.error('Error initializing Datastore client:', error);
+  throw error;
 }
 
-// ServiceCatalog represents the main entity
-type ServiceCatalog struct {
-    AppDescription    string   `datastore:"appDescription"`
-    Type              string   `datastore:"type"`
-    Domain            string   `datastore:"domain"`
-    Tier              string   `datastore:"tier"`
-    InfraType         string   `datastore:"infraType"`
-    Lifecycle         string   `datastore:"lifecycle"`
-    Impact            string   `datastore:"impact"`
-    GoogleProjectName string   `datastore:"googleProjectName"`
-    DevContacts       []string `datastore:"devContacts"`
-    SREContacts       []string `datastore:"sreContacts"`
-    SLOs              *SLOs    `datastore:"slos"`
-    UsefulLinks       string   `datastore:"usefulLinks,noindex"`
-    Dependencies      []string `datastore:"dependencies"`
-}
-
-func main() {
-    ctx := context.Background()
-
-    // TODO: Replace 'your-project-id' with your actual Google Cloud project ID
-    projectID := "your-project-id"
-
-    client, err := datastore.NewClient(ctx, projectID)
-    if err != nil {
-        log.Fatalf("Failed to create datastore client: %v", err)
-    }
-    defer client.Close()
-
-    // Test data
-    serviceCatalogs := []*ServiceCatalog{
-        {
-            AppDescription:    "User authentication and authorization service",
-            Type:              "Microservice",
-            Domain:            "Identity",
-            Tier:              "Critical",
-            InfraType:         "Kubernetes",
-            Lifecycle:         "Production",
-            Impact:            "High - Affects all user logins",
-            GoogleProjectName: "my-company-auth",
-            DevContacts:       []string{"alice@example.com", "bob@example.com"},
-            SREContacts:       []string{"charlie@example.com", "diana@example.com"},
-            SLOs: &SLOs{
-                Volume:       1000000,
-                Availability: 99.99,
-                Latency:      100,
-                Errors:       0.1,
-            },
-            Dependencies: []string{"UserDB", "EmailService"},
-        },
-        {
-            AppDescription:    "Handles all payment transactions",
-            Type:              "Microservice",
-            Domain:            "Finance",
-            Tier:              "Critical",
-            InfraType:         "Kubernetes",
-            Lifecycle:         "Production",
-            Impact:            "High - Affects all financial transactions",
-            GoogleProjectName: "my-company-payments",
-            DevContacts:       []string{"eve@example.com", "frank@example.com"},
-            SREContacts:       []string{"grace@example.com", "henry@example.com"},
-            SLOs: &SLOs{
-                Volume:       500000,
-                Availability: 99.999,
-                Latency:      200,
-                Errors:       0.01,
-            },
-            Dependencies: []string{"UserAuth", "FinanceDB", "FraudDetection"},
-        },
-        {
-            AppDescription:    "Manages product information and inventory",
-            Type:              "Microservice",
-            Domain:            "Inventory",
-            Tier:              "Important",
-            InfraType:         "AppEngine",
-            Lifecycle:         "Production",
-            Impact:            "Medium - Affects product browsing and purchasing",
-            GoogleProjectName: "my-company-catalog",
-            DevContacts:       []string{"ivan@example.com", "julia@example.com"},
-            SREContacts:       []string{"karen@example.com", "liam@example.com"},
-            SLOs: &SLOs{
-                Volume:       2000000,
-                Availability: 99.95,
-                Latency:      150,
-                Errors:       0.5,
-            },
-            Dependencies: []string{"ProductDB", "ImageCDN"},
-        },
-    }
-
-    // UsefulLinks data for each service
-    usefulLinksList := []map[string]string{
-        {
-            "architecture": "https://wiki.example.com/auth/architecture",
-            "dashboard":    "https://grafana.example.com/auth-dashboard",
-            "runbook":      "https://wiki.example.com/auth/runbook",
-        },
-        {
-            "architecture": "https://wiki.example.com/payments/architecture",
-            "dashboard":    "https://grafana.example.com/payments-dashboard",
-            "runbook":      "https://wiki.example.com/payments/runbook",
-        },
-        {
-            "architecture": "https://wiki.example.com/catalog/architecture",
-            "dashboard":    "https://grafana.example.com/catalog-dashboard",
-            "runbook":      "https://wiki.example.com/catalog/runbook",
-        },
-    }
-
-    // App names to be used as keys
-    appNames := []string{"UserAuth", "PaymentGateway", "ProductCatalog"}
-
-    // Load data into Datastore
-    for i, sc := range serviceCatalogs {
-        // Marshal the UsefulLinks map to JSON
-        usefulLinksJSON, err := json.Marshal(usefulLinksList[i])
-        if err != nil {
-            log.Fatalf("Failed to marshal UsefulLinks for %s: %v", appNames[i], err)
-        }
-        sc.UsefulLinks = string(usefulLinksJSON)
-
-        key := datastore.NameKey("ServiceCatalog", appNames[i], nil)
-        if _, err := client.Put(ctx, key, sc); err != nil {
-            log.Fatalf("Failed to save entity %s: %v", appNames[i], err)
-        }
-        fmt.Printf("Successfully saved %s\n", appNames[i])
-    }
-
-    // Optional: Fetch and print the entities to verify
-    query := datastore.NewQuery("ServiceCatalog")
-    it := client.Run(ctx, query)
-    fmt.Println("\nFetched Entities:")
-    for {
-        var sc ServiceCatalog
-        key, err := it.Next(&sc)
-        if err == iterator.Done {
-            break
-        }
-        if err != nil {
-            log.Fatalf("Failed to fetch entity: %v", err)
-        }
-        fmt.Printf("AppName: %s, AppDescription: %s\n", key.Name, sc.AppDescription)
-
-        // Unmarshal the UsefulLinks JSON string back to a map
-        var usefulLinks map[string]string
-        if err := json.Unmarshal([]byte(sc.UsefulLinks), &usefulLinks); err != nil {
-            log.Fatalf("Failed to unmarshal UsefulLinks for %s: %v", key.Name, err)
-        }
-        fmt.Printf("UsefulLinks: %+v\n", usefulLinks)
-    }
-}
-
+export default datastore;
 
 
 
