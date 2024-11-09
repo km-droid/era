@@ -1,1007 +1,217 @@
-npx create-next-app service-catalog-app
-cd service-catalog-app
-Install Dependencies
-
-bash
-Copy code
-npm install tailwindcss @fortawesome/fontawesome-free recharts @google-cloud/datastore
-Initialize Tailwind CSS
-
-bash
-Copy code
-npx tailwindcss init -p
-Configure Tailwind CSS
-
-Update tailwind.config.js:
-
-js
-Copy code
-module.exports = {
-  content: [
-    './pages/**/*.{js,ts,jsx,tsx}',
-    './components/**/*.{js,ts,jsx,tsx}',
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-};
-Include Tailwind in CSS
-
-In styles/globals.css, add:
-
-css
-Copy code
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-Add FontAwesome CSS
-
-In pages/_app.js, import FontAwesome CSS:
-
-jsx
-Copy code
-import '../styles/globals.css';
-import '@fortawesome/fontawesome-free/css/all.min.css';
-
-function MyApp({ Component, pageProps }) {
-  return <Component {...pageProps} />;
-}
-
-export default MyApp;
-Setting Up Google Cloud Datastore Client
-Create a file lib/datastore.js:
-
-jsx
-Copy code
-// lib/datastore.js
-import { Datastore } from '@google-cloud/datastore';
-
-const datastore = new Datastore({
-  projectId: 'YOUR_PROJECT_ID', // Replace with your project ID
-});
-
-export default datastore;
-1. Header Component
-Create components/Header.js:
-
-jsx
-Copy code
-// components/Header.js
-import Link from 'next/link';
-
-export default function Header({ username }) {
-  return (
-    <header className="bg-gray-800 text-white px-4 py-2 flex justify-between items-center">
-      <div className="flex items-center space-x-4">
-        <Link href="/">
-          <a className="text-xl font-bold hover:text-gray-300">
-            <i className="fas fa-home"></i> Home
-          </a>
-        </Link>
-        <Link href="/onboard">
-          <a className="hover:text-gray-300">
-            <i className="fas fa-plus-circle"></i> Onboard
-          </a>
-        </Link>
-      </div>
-      <div className="flex items-center space-x-2">
-        <i className="fas fa-user-circle text-2xl"></i>
-        <span>{username}</span>
-      </div>
-    </header>
-  );
-}
-2. Landing Page (Home)
-Update pages/index.js:
-
-jsx
-Copy code
-// pages/index.js
-import { useState, useEffect } from 'react';
-import Header from '../components/Header';
-import AppTable from '../components/AppTable';
-
-export default function Home() {
-  const [services, setServices] = useState([]);
-  const [username, setUsername] = useState('User');
-
-  useEffect(() => {
-    // Fetch services from API
-    fetch('/api/services')
-      .then((res) => res.json())
-      .then((data) => setServices(data))
-      .catch((err) => console.error(err));
-  }, []);
-
-  return (
-    <div className="min-h-screen">
-      <Header username={username} />
-      <div className="p-4">
-        <AppTable services={services} />
-      </div>
-    </div>
-  );
-}
-3. App Table Component
-Create components/AppTable.js:
-
-jsx
-Copy code
-// components/AppTable.js
-import Link from 'next/link';
-import { useState } from 'react';
-
-export default function AppTable({ services }) {
-  const [searchTerm, setSearchTerm] = useState('');
-
-  const filteredServices = services.filter((service) =>
-    service.appName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <input
-          type="text"
-          placeholder="Search..."
-          className="border p-2 rounded w-1/3"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-        <Link href="/onboard">
-          <a className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-            <i className="fas fa-plus-circle"></i> Onboard
-          </a>
-        </Link>
-      </div>
-      <table className="w-full table-auto">
-        <thead>
-          <tr className="bg-gray-200">
-            <th className="px-4 py-2">App Name</th>
-            <th className="px-4 py-2">Type</th>
-            <th className="px-4 py-2">Domain</th>
-            <th className="px-4 py-2">Tier</th>
-            <th className="px-4 py-2">Infra Type</th>
-            <th className="px-4 py-2">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredServices.map((service) => (
-            <tr key={service.appName} className="text-center border-b hover:bg-gray-100">
-              <td className="px-4 py-2">{service.appName}</td>
-              <td className="px-4 py-2">{service.type}</td>
-              <td className="px-4 py-2">{service.domain}</td>
-              <td className="px-4 py-2">{service.tier}</td>
-              <td className="px-4 py-2">{service.infraType}</td>
-              <td className="px-4 py-2">
-                <Link href={`/app/${service.appName}`}>
-                  <a className="text-blue-500 hover:text-blue-700">
-                    <i className="fas fa-eye"></i> View
-                  </a>
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-4. Onboard Form Page
-Create pages/onboard.js:
-
-jsx
-Copy code
-// pages/onboard.js
-import { useState } from 'react';
-import Header from '../components/Header';
-
-export default function Onboard() {
-  const [formData, setFormData] = useState({
-    appName: '',
-    appDescription: '',
-    type: '',
-    domain: '',
-    tier: '',
-    infraType: '',
-    lifecycle: '',
-    impact: '',
-    googleProjectName: '',
-    devContacts: '',
-    sreContacts: '',
-    // Add other fields as needed
-  });
-
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // Prepare data for submission
-    const data = {
-      ...formData,
-      devContacts: formData.devContacts.split(',').map((email) => email.trim()),
-      sreContacts: formData.sreContacts.split(',').map((email) => email.trim()),
-    };
-    // Submit data to API
-    fetch('/api/services', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-      .then((res) => {
-        if (res.ok) {
-          alert('Service onboarded successfully!');
-          setFormData({});
-        } else {
-          alert('Failed to onboard service.');
-        }
-      })
-      .catch((err) => console.error(err));
-  };
-
-  return (
-    <div className="min-h-screen">
-      <Header username="User" />
-      <div className="p-4">
-        <h2 className="text-2xl font-bold mb-4">Onboard Microservice</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Add form fields here */}
-          <div>
-            <label className="block font-bold">App Name</label>
-            <input
-              type="text"
-              name="appName"
-              className="border p-2 rounded w-full"
-              value={formData.appName || ''}
-              onChange={handleChange}
-              required
-            />
-          </div>
-          {/* Repeat for other fields */}
-          {/* ... */}
-          <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-            Submit
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-Note: You'll need to add all form fields as per your data schema.
-
-5. App Details Page
-Create dynamic route pages/app/[appName]/index.js:
-
-jsx
-Copy code
-// pages/app/[appName]/index.js
-import { useRouter } from 'next/router';
-import { useState, useEffect } from 'react';
-import Header from '../../../components/Header';
-import OverviewTab from '../../../components/OverviewTab';
-import SLOsTab from '../../../components/SLOsTab';
-import UsefulLinksTab from '../../../components/UsefulLinksTab';
-import DependenciesTab from '../../../components/DependenciesTab';
-import HealthTab from '../../../components/HealthTab';
+import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/router'
+import Link from 'next/link'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faArrowLeft, faInfoCircle, faCopy, faCircle } from '@fortawesome/free-solid-svg-icons'
+import Layout from '../../components/Layout'
+import { ServiceCatalog, ServiceHealth } from '../../types'
 
 export default function AppDetails() {
-  const router = useRouter();
-  const { appName } = router.query;
-  const [service, setService] = useState(null);
-  const [activeTab, setActiveTab] = useState('Overview');
+  const router = useRouter()
+  const { appName } = router.query
+
+  const [activeTab, setActiveTab] = useState('overview')
+  const [appDetails, setAppDetails] = useState<ServiceCatalog | null>(null)
+  const [healthData, setHealthData] = useState<ServiceHealth[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (appName) {
-      fetch(`/api/services/${appName}`)
-        .then((res) => res.json())
-        .then((data) => setService(data))
-        .catch((err) => console.error(err));
+    if (appName && typeof appName === 'string') {
+      fetchAppDetails(appName)
+      fetchHealthData(appName)
     }
-  }, [appName]);
+  }, [appName])
 
-  if (!service) {
-    return (
-      <div className="min-h-screen">
-        <Header username="User" />
-        <div className="p-4">Loading...</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen">
-      <Header username="User" />
-      <div className="p-4">
-        <button onClick={() => router.back()} className="text-blue-500 hover:text-blue-700 mb-4">
-          <i className="fas fa-arrow-left"></i> Back
-        </button>
-        <h2 className="text-2xl font-bold mb-4">{service.appName}</h2>
-        {/* Tabs */}
-        <div className="border-b mb-4">
-          {['Overview', 'SLOs', 'Useful Links', 'Dependencies', 'Health'].map((tab) => (
-            <button
-              key={tab}
-              className={`px-4 py-2 -mb-px border-b-2 ${
-                activeTab === tab ? 'border-blue-500 text-blue-500' : 'border-transparent'
-              }`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        {/* Tab Content */}
-        {activeTab === 'Overview' && <OverviewTab service={service} />}
-        {activeTab === 'SLOs' && <SLOsTab slos={service.slos} />}
-        {activeTab === 'Useful Links' && <UsefulLinksTab links={service.usefulLinks} />}
-        {activeTab === 'Dependencies' && <DependenciesTab dependencies={service.dependencies} />}
-        {activeTab === 'Health' && <HealthTab appName={service.appName} />}
-      </div>
-    </div>
-  );
-}
-6. Overview Tab Component
-Create components/OverviewTab.js:
-
-jsx
-Copy code
-// components/OverviewTab.js
-import { useState } from 'react';
-
-export default function OverviewTab({ service }) {
-  const [showAppDesc, setShowAppDesc] = useState(false);
-  const [showImpact, setShowImpact] = useState(false);
-
-  const data = [
-    { key: 'App Name', value: service.appName },
-    {
-      key: 'App Desc',
-      value: (
-        <i
-          className="fas fa-info-circle text-blue-500 cursor-pointer"
-          onClick={() => setShowAppDesc(!showAppDesc)}
-        ></i>
-      ),
-    },
-    { key: 'Lifecycle', value: service.lifecycle },
-    {
-      key: 'Impact',
-      value: (
-        <i
-          className="fas fa-info-circle text-blue-500 cursor-pointer"
-          onClick={() => setShowImpact(!showImpact)}
-        ></i>
-      ),
-    },
-    { key: 'Google Project Name', value: service.googleProjectName },
-    { key: 'Domain', value: service.domain },
-    { key: 'Dev Contacts', value: service.devContacts.join(', ') },
-    { key: 'SRE Contacts', value: service.sreContacts.join(', ') },
-  ];
-
-  return (
-    <div>
-      {showAppDesc && (
-        <div className="mb-4 p-4 border rounded bg-gray-50">
-          <strong>App Description:</strong> {service.appDescription}
-        </div>
-      )}
-      {showImpact && (
-        <div className="mb-4 p-4 border rounded bg-gray-50">
-          <strong>Impact:</strong> {service.impact}
-        </div>
-      )}
-      <table className="w-full">
-        <tbody>
-          {data.map((item) => (
-            <tr
-              key={item.key}
-              className="hover:bg-gray-100 cursor-pointer"
-              onMouseEnter={() => {}}
-            >
-              <td className="py-2 font-bold">{item.key}</td>
-              <td className="py-2">{item.value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-7. SLOs Tab Component
-Create components/SLOsTab.js:
-
-jsx
-Copy code
-// components/SLOsTab.js
-export default function SLOsTab({ slos }) {
-  const data = [
-    { key: 'Volume', value: slos.volume },
-    { key: 'Availability', value: slos.availability },
-    { key: 'Latency', value: slos.latency },
-    { key: 'Errors', value: slos.errors },
-  ];
-
-  return (
-    <div>
-      <table className="w-full">
-        <tbody>
-          {data.map((item) => (
-            <tr key={item.key} className="hover:bg-gray-100 cursor-pointer">
-              <td className="py-2 font-bold">{item.key}</td>
-              <td className="py-2">{item.value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-8. Useful Links Tab Component
-Create components/UsefulLinksTab.js:
-
-jsx
-Copy code
-// components/UsefulLinksTab.js
-export default function UsefulLinksTab({ links }) {
-  const handleCopy = (url) => {
-    navigator.clipboard.writeText(url);
-    alert('Link copied to clipboard!');
-  };
-
-  return (
-    <div>
-      <table className="w-full">
-        <tbody>
-          {Object.entries(links).map(([key, value]) => (
-            <tr key={key} className="hover:bg-gray-100 cursor-pointer">
-              <td className="py-2 font-bold">{key}</td>
-              <td className="py-2 flex justify-between items-center">
-                <a href={value} target="_blank" rel="noopener noreferrer" className="text-blue-500">
-                  {value}
-                </a>
-                <i
-                  className="fas fa-copy text-gray-500 hover:text-gray-700 cursor-pointer"
-                  onClick={() => handleCopy(value)}
-                ></i>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-9. Dependencies Tab Component
-Create components/DependenciesTab.js:
-
-jsx
-Copy code
-// components/DependenciesTab.js
-export default function DependenciesTab({ dependencies }) {
-  return (
-    <div>
-      <ul className="list-disc pl-5">
-        {dependencies.map((dep) => (
-          <li key={dep} className="py-2 hover:bg-gray-100 cursor-pointer">
-            <i className="fas fa-circle-notch text-gray-500 mr-2"></i> {dep}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-10. Health Tab Component
-Create components/HealthTab.js:
-
-jsx
-Copy code
-// components/HealthTab.js
-import { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-
-export default function HealthTab({ appName }) {
-  const [healthData, setHealthData] = useState(null);
-
-  useEffect(() => {
-    // Fetch health data from API
-    fetch(`/api/health/${appName}`)
-      .then((res) => res.json())
-      .then((data) => setHealthData(data))
-      .catch((err) => console.error(err));
-  }, [appName]);
-
-  if (!healthData) {
-    return <div>Loading health data...</div>;
-  }
-
-  const { healthy, errorBudget, metrics } = healthData;
-
-  const arrowIcon = healthy ? (
-    <i className="fas fa-arrow-up text-green-500"></i>
-  ) : (
-    <i className="fas fa-arrow-down text-red-500"></i>
-  );
-
-  return (
-    <div>
-      <div className="flex space-x-4 mb-4">
-        <div className="flex-1 p-4 border rounded bg-gray-50">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold">Healthy</h3>
-            {arrowIcon}
-          </div>
-          <p className={`text-2xl ${healthy ? 'text-green-500' : 'text-red-500'}`}>
-            {healthy ? 'Yes' : 'No'}
-          </p>
-        </div>
-        <div className="flex-1 p-4 border rounded bg-gray-50">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold">Error Budget</h3>
-            {errorBudget > 0 ? (
-              <i className="fas fa-arrow-up text-green-500"></i>
-            ) : (
-              <i className="fas fa-arrow-down text-red-500"></i>
-            )}
-          </div>
-          <p className={`text-2xl ${errorBudget > 0 ? 'text-green-500' : 'text-red-500'}`}>
-            {errorBudget}%
-          </p>
-        </div>
-      </div>
-      {/* Charts */}
-      <div className="grid grid-cols-2 gap-4">
-        {['volume', 'availability', 'latency', 'errors'].map((metric) => (
-          <div key={metric} className="p-4 border rounded bg-gray-50">
-            <h4 className="font-bold mb-2 capitalize">{metric}</h4>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={metrics}>
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey={metric}
-                  stroke="#8884d8"
-                  activeDot={{ r: 8 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-Setting Up API Routes
-1. Get All Services
-Create pages/api/services/index.js:
-
-jsx
-Copy code
-// pages/api/services/index.js
-import datastore from '../../../lib/datastore';
-
-export default async function handler(req, res) {
-  if (req.method === 'GET') {
-    // Fetch all services
-    const query = datastore.createQuery('ServiceCatalog');
-    const [services] = await datastore.runQuery(query);
-    res.status(200).json(services.map((service) => ({ ...service, appName: service[datastore.KEY].name })));
-  } else if (req.method === 'POST') {
-    // Create a new service
-    const data = req.body;
-    const key = datastore.key(['ServiceCatalog', data.appName]);
-    const entity = {
-      key,
-      data,
-    };
-    await datastore.save(entity);
-    res.status(201).json({ message: 'Service created' });
-  } else {
-    res.status(405).json({ message: 'Method not allowed' });
-  }
-}
-2. Get a Single Service
-Create pages/api/services/[appName].js:
-
-jsx
-Copy code
-// pages/api/services/[appName].js
-import datastore from '../../../lib/datastore';
-
-export default async function handler(req, res) {
-  const { appName } = req.query;
-
-  if (req.method === 'GET') {
-    const key = datastore.key(['ServiceCatalog', appName]);
-    const [service] = await datastore.get(key);
-    if (service) {
-      res.status(200).json({ ...service, appName });
-    } else {
-      res.status(404).json({ message: 'Service not found' });
+  const fetchAppDetails = async (name: string) => {
+    try {
+      const response = await fetch(`/api/services/${name}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch app details')
+      }
+      const data = await response.json()
+      setAppDetails(data)
+      setLoading(false)
+    } catch (err) {
+      setError('Error fetching app details. Please try again later.')
+      setLoading(false)
     }
-  } else {
-    res.status(405).json({ message: 'Method not allowed' });
   }
-}
-3. Get Health Data
-Create pages/api/health/[appName].js:
 
-jsx
-Copy code
-// pages/api/health/[appName].js
-import datastore from '../../../lib/datastore';
-
-export default async function handler(req, res) {
-  const { appName } = req.query;
-
-  if (req.method === 'GET') {
-    // Fetch health summary from ServiceCatalog
-    const key = datastore.key(['ServiceCatalog', appName]);
-    const [service] = await datastore.get(key);
-
-    if (!service) {
-      res.status(404).json({ message: 'Service not found' });
-      return;
+  const fetchHealthData = async (name: string) => {
+    try {
+      const response = await fetch(`/api/services/${name}/health`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch health data')
+      }
+      const data = await response.json()
+      setHealthData(data)
+    } catch (err) {
+      console.error('Error fetching health data:', err)
     }
-
-    // Fetch health metrics (simulate data for example)
-    const metrics = generateDummyMetrics();
-
-    const healthData = {
-      healthy: service.healthSummary?.healthy || false,
-      errorBudget: service.healthSummary?.errorBudget || 0,
-      metrics,
-    };
-
-    res.status(200).json(healthData);
-  } else {
-    res.status(405).json({ message: 'Method not allowed' });
   }
-}
 
-// Function to generate dummy metrics data
-function generateDummyMetrics() {
-  const metrics = [];
-  for (let i = 7; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    metrics.push({
-      date: date.toISOString().split('T')[0],
-      volume: Math.floor(Math.random() * 1000),
-      availability: (Math.random() * 100 + 0).toFixed(2),
-      latency: (Math.random() * 500 + 100).toFixed(2),
-      errors: (Math.random() * 10).toFixed(2),
-    });
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+      .then(() => alert('Copied to clipboard!'))
+      .catch(err => console.error('Failed to copy:', err))
   }
-  return metrics;
+
+  if (loading) return <Layout username="John Doe"><div>Loading...</div></Layout>
+  if (error) return <Layout username="John Doe"><div className="text-red-500">{error}</div></Layout>
+  if (!appDetails) return <Layout username="John Doe"><div>App not found</div></Layout>
+
+  return (
+    <Layout username="John Doe">
+      <div className="space-y-6">
+        <div className="flex items-center space-x-4">
+          <Link href="/" className="text-blue-600 hover:text-blue-800 transition-colors">
+            <FontAwesomeIcon icon={faArrowLeft} className="mr-2" />
+            Back
+          </Link>
+          <h1 className="text-3xl font-bold">{appDetails.appName}</h1>
+        </div>
+
+        <div className="border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            {['Overview', 'SLOs', 'Useful Links', 'Dependencies', 'Health'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab.toLowerCase().replace(' ', '-'))}
+                className={`${
+                  activeTab === tab.toLowerCase().replace(' ', '-')
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                {tab}
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        {activeTab === 'overview' && (
+          <div className="space-y-4">
+            <table className="w-full">
+              <tbody>
+                {Object.entries(appDetails).map(([key, value]) => (
+                  <tr key={key} className="hover:bg-gray-50">
+                    <td className="py-2 font-medium">{key}</td>
+                    <td className="py-2">
+                      {key === 'appDescription' || key === 'impact' ? (
+                        <div className="relative group">
+                          <FontAwesomeIcon icon={faInfoCircle} className="text-blue-500 cursor-pointer" />
+                          <div className="absolute z-10 invisible group-hover:visible bg-white text-gray-800 p-2 rounded shadow-lg">
+                            {value as string}
+                          </div>
+                        </div>
+                      ) : Array.isArray(value) ? (
+                        value.join(', ')
+                      ) : typeof value === 'object' ? (
+                        JSON.stringify(value)
+                      ) : (
+                        value as string
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'slos' && (
+          <div className="space-y-4">
+            <table className="w-full">
+              <tbody>
+                {Object.entries(appDetails.slos).map(([key, value]) => (
+                  <tr key={key} className="hover:bg-gray-50">
+                    <td className="py-2 font-medium">{key}</td>
+                    <td className="py-2">{value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'useful-links' && (
+          <div className="space-y-4">
+            <table className="w-full">
+              <tbody>
+                {Object.entries(appDetails.usefulLinks).map(([key, value]) => (
+                  <tr key={key} className="hover:bg-gray-50 group">
+                    <td className="py-2 font-medium">{key}</td>
+                    <td className="py-2">
+                      <a href={value} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                        {value}
+                      </a>
+                    </td>
+                    <td className="py-2">
+                      <FontAwesomeIcon
+                        icon={faCopy}
+                        className="text-gray-400 cursor-pointer invisible group-hover:visible"
+                        onClick={() => copyToClipboard(value)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'dependencies' && (
+          <div className="space-y-4">
+            <ul>
+              {appDetails.dependencies.map((dep) => (
+                <li key={dep} className="flex items-center space-x-2 py-2 hover:bg-gray-50">
+                  <FontAwesomeIcon icon={faCircle} className="text-blue-500 text-xs" />
+                  <span>{dep}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {activeTab === 'health' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-gray-100 p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">Healthy</h3>
+                <div className="text-3xl font-bold text-green-500">
+                  {healthData[healthData.length - 1]?.status === 'healthy' ? 'Yes' : 'No'}
+                </div>
+              </div>
+              <div className="bg-gray-100 p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">Error Budget</h3>
+                <div className="text-3xl font-bold text-blue-500">
+                  {healthData[healthData.length - 1]?.errorBudget.toFixed(2)}%
+                </div>
+              </div>
+            </div>
+            <div className="space-y-4">
+              <h3 className="text-xl font-semibold">Last 7 Days Metrics</h3>
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="py-2 px-4 text-left">Metric</th>
+                    <th className="py-2 px-4 text-left">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {healthData[healthData.length - 1]?.metrics && Object.entries(healthData[healthData.length - 1].metrics).map(([key, value]) => (
+                    <tr key={key} className="hover:bg-gray-50">
+                      <td className="py-2 px-4 font-medium">{key}</td>
+                      <td className="py-2 px-4">{value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </Layout>
+  )
 }
-Note: In a real application, you'd fetch actual health metrics from Datastore or another monitoring system.
-
-Final Notes
-Data Validation: For simplicity, data validation is minimal. In a production app, ensure proper validation.
-Error Handling: Basic error handling is included. Expand it as needed.
-Styling: Tailwind CSS classes are used throughout for styling. Adjust as per your design preferences.
-Icons: FontAwesome icons are used wherever applicable.
-Responsive Design: Tailwind CSS ensures the app is responsive, but test across devices.
-Accessibility: Basic accessibility considerations are made. Review for compliance.
-Testing the App
-Run the Development Server
-
-bash
-Copy code
-npm run dev
-Access the App
-
-Open http://localhost:3000 in your browser.
-
-Onboard a Service
-
-Click on the "Onboard" button.
-Fill in the form and submit.
-View Services
-
-Return to the home page.
-Your new service should appear in the table.
-View App Details
-
-Click on "View" next to a service.
-Explore the different tabs.
-Conclusion
-This complete implementation provides a functional Service Catalog app with a React frontend using Next.js and Tailwind CSS, and a Google Cloud Datastore backend. The app meets all your design prompts and is fully responsive and accessible.
-
-Feel free to expand upon this foundation, adding features like authentication, more detailed data validation, and integration with real monitoring systems for health metrics.
-
-Let me know if you have any questions or need further assistance!
-
-
-
-
-
-
-You said:
-can you give me the project structure and npm npx dependency install commands
-ChatGPT
-
-Thought for 29 seconds
-
-Certainly! Below is the project structure and the commands to install all necessary dependencies for your Service Catalog app.
-
-Project Structure
-Here's the recommended project structure for your Next.js application. This structure includes all the files and directories based on the components and pages described earlier.
-
-arduino
-Copy code
-service-catalog-app/
-├── components/
-│   ├── AppTable.js
-│   ├── DependenciesTab.js
-│   ├── Header.js
-│   ├── HealthTab.js
-│   ├── OverviewTab.js
-│   ├── SLOsTab.js
-│   └── UsefulLinksTab.js
-├── lib/
-│   └── datastore.js
-├── pages/
-│   ├── api/
-│   │   ├── health/
-│   │   │   └── [appName].js
-│   │   └── services/
-│   │       ├── [appName].js
-│   │       └── index.js
-│   ├── app/
-│   │   └── [appName]/
-│   │       └── index.js
-│   ├── onboard.js
-│   ├── index.js
-│   └── _app.js
-├── public/
-│   └── (static assets if any)
-├── styles/
-│   └── globals.css
-├── tailwind.config.js
-├── package.json
-├── postcss.config.js
-└── README.md
-Description of Files and Directories
-components/: Contains all the reusable React components.
-
-AppTable.js: Component for displaying the services table on the landing page.
-DependenciesTab.js: Component for the Dependencies tab in the App Details page.
-Header.js: Header component displayed on all pages.
-HealthTab.js: Component for the Health tab in the App Details page.
-OverviewTab.js: Component for the Overview tab in the App Details page.
-SLOsTab.js: Component for the SLOs tab in the App Details page.
-UsefulLinksTab.js: Component for the Useful Links tab in the App Details page.
-lib/: Contains library files or utilities.
-
-datastore.js: Initializes and exports the Google Cloud Datastore client.
-pages/: Contains all the page components and API routes.
-
-api/: Contains API route handlers.
-health/[appName].js: API route for fetching health data for a specific app.
-services/[appName].js: API route for fetching a specific service.
-services/index.js: API route for fetching all services and creating new services.
-app/[appName]/index.js: Dynamic route for the App Details page.
-onboard.js: Page for onboarding a new microservice.
-index.js: The landing page (home page).
-_app.js: Custom App component to initialize pages.
-public/: Contains static assets like images and icons (if any).
-
-styles/: Contains global CSS files.
-
-globals.css: The global CSS file where Tailwind CSS directives are imported.
-tailwind.config.js: Configuration file for Tailwind CSS.
-
-postcss.config.js: Configuration file for PostCSS, used by Tailwind CSS.
-
-package.json: Contains metadata about the project and its dependencies.
-
-README.md: Documentation for your project.
-
-NPM and NPX Dependency Installation Commands
-Here are the commands to set up the project and install all the necessary dependencies.
-
-1. Initialize a New Next.js Project
-bash
-Copy code
-npx create-next-app service-catalog-app
-cd service-catalog-app
-When prompted, you can accept the default settings or customize them according to your preferences.
-
-2. Install Dependencies
-Install the required dependencies using npm:
-
-bash
-Copy code
-npm install tailwindcss @fortawesome/fontawesome-free recharts @google-cloud/datastore
-tailwindcss: Utility-first CSS framework for styling.
-@fortawesome/fontawesome-free: Font Awesome icons.
-recharts: Library for rendering charts in React.
-@google-cloud/datastore: Google Cloud Datastore client library for Node.js.
-3. Initialize Tailwind CSS
-Initialize Tailwind CSS configuration:
-
-bash
-Copy code
-npx tailwindcss init -p
-This creates a tailwind.config.js file and adds the postcss.config.js file.
-
-4. Update tailwind.config.js
-Ensure your tailwind.config.js has the correct content:
-
-js
-Copy code
-// tailwind.config.js
-module.exports = {
-  content: [
-    './pages/**/*.{js,ts,jsx,tsx}',
-    './components/**/*.{js,ts,jsx,tsx}',
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-};
-5. Include Tailwind Directives in globals.css
-In your styles/globals.css, add the Tailwind directives:
-
-css
-Copy code
-/* styles/globals.css */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-6. Import FontAwesome CSS in _app.js
-In pages/_app.js, import the FontAwesome CSS:
-
-jsx
-Copy code
-// pages/_app.js
-import '../styles/globals.css';
-import '@fortawesome/fontawesome-free/css/all.min.css';
-
-function MyApp({ Component, pageProps }) {
-  return <Component {...pageProps} />;
-}
-
-export default MyApp;
-7. Set Up the Datastore Client
-Create a lib directory and add datastore.js:
-
-bash
-Copy code
-mkdir lib
-touch lib/datastore.js
-In lib/datastore.js, initialize the Datastore client:
-
-jsx
-Copy code
-// lib/datastore.js
-import { Datastore } from '@google-cloud/datastore';
-
-const datastore = new Datastore({
-  projectId: 'YOUR_PROJECT_ID', // Replace with your Google Cloud project ID
-});
-
-export default datastore;
-Note: Replace 'YOUR_PROJECT_ID' with your actual Google Cloud project ID. Ensure you have authenticated with Google Cloud SDK using gcloud auth application-default login or by setting up a service account key.
-
-8. Create the Components and Pages
-Create the directories and files as per the project structure.
-
-Create Components
-bash
-Copy code
-mkdir components
-touch components/Header.js
-touch components/AppTable.js
-touch components/OverviewTab.js
-touch components/SLOsTab.js
-touch components/UsefulLinksTab.js
-touch components/DependenciesTab.js
-touch components/HealthTab.js
-Create API Routes
-bash
-Copy code
-mkdir -p pages/api/services
-touch pages/api/services/index.js
-touch pages/api/services/[appName].js
-
-mkdir -p pages/api/health
-touch pages/api/health/[appName].js
-Create Pages
-bash
-Copy code
-mkdir -p pages/app/[appName]
-touch pages/app/[appName]/index.js
-
-touch pages/onboard.js
-touch pages/index.js
-Create Global Styles
-bash
-Copy code
-mkdir styles
-touch styles/globals.css
-9. Populate Files with Code
-Use the code provided in the previous answer to populate each file. Ensure that you include all necessary imports, styling, and functionality as specified.
-
-Additional Notes
-Node.js Version: Ensure you're using a compatible Node.js version (preferably Node.js 14 or newer).
-
-Environment Variables: You may need to set environment variables for your Google Cloud credentials if not using Application Default Credentials.
-
-Authentication:
-
-Option 1: Use Application Default Credentials.
-
-Run:
-
-bash
-Copy code
-gcloud auth application-default login
-Option 2: Use a Service Account Key.
-
-Create a service account in your Google Cloud project.
-Download the JSON key file.
-Set the GOOGLE_APPLICATION_CREDENTIALS environment variable to point to the key file.
-bash
-Copy code
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/keyfile.json"
-Testing the App:
-
-Start the development server:
-
-bash
-Copy code
-npm run dev
-Open http://localhost:3000 in your browser to view the app.
-
-Deployment:
-
-For deploying the app to production, you can consider using platforms like Vercel (which is designed for Next.js apps) or deploying on Google Cloud Platform using App Engine or Cloud Run.
-
-Summary of NPM/NPX Commands
-Here is a summary of all the commands:
-
-bash
-Copy code
-# Initialize Next.js app
-npx create-next-app service-catalog-app
-cd service-catalog-app
-
-# Install dependencies
-npm install tailwindcss @fortawesome/fontawesome-free recharts @google-cloud/datastore
-
-# Initialize Tailwind CSS
-npx tailwindcss init -p
-
-# Create directories and files (example for components)
-mkdir components
-touch components/Header.js
-# Repeat for other components...
-
-# Start the development server
-npm run dev
-Let me know if you need any further assistance or have any questions about setting up the project!
-
-
-
-
-
-
-
-
-
-
-
-ChatGPT can make mistakes. Check im
