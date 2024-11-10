@@ -1,36 +1,165 @@
-{editMode ? (
-                            field === 'appDescription' || field === 'impact' ? (
-                              <Textarea
-                                value={editedDetails[field] as string}
-                                onChange={(e) => handleEdit(field, e.target.value)}
-                                className="w-full"
-                              />
-                            ) : field === 'devContacts' || field === 'sreContacts' ? (
-                              <Input
-                                type="text"
-                                value={(editedDetails[field] as string[])?.join(', ') || ''}
-                                onChange={(e) => handleEdit(field, e.target.value.split(',').map(item => item.trim()))}
-                                className="w-full"
-                                placeholder="Enter comma-separated values"
-                              />
-                            ) : (
-                              <Input
-                                type="text"
-                                value={editedDetails[field] as string}
-                                onChange={(e) => handleEdit(field, e.target.value)}
-                                className="w-full"
-                              />
-                            )
-                          ) : (
-                            <div className="whitespace-pre-wrap">
-                              {field === 'devContacts' || field === 'sreContacts' ? (
-                                <ul className="list-disc list-inside">
-                                  {(editedDetails[field] as string[])?.map((contact, index) => (
-                                    <li key={index}>{contact}</li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                editedDetails[field] as string
-                              )}
-                            </div>
-                          )}
+import React, { useState } from 'react'
+import { useRouter } from 'next/router'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faArrowLeft } from '@fortawesome/free-solid-svg-icons'
+import Link from 'next/link'
+import Layout from '../components/Layout'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+
+export default function Onboard() {
+  const router = useRouter()
+  const [formData, setFormData] = useState({
+    appName: '',
+    appDescription: '',
+    lifecycle: '',
+    impact: '',
+    googleProjectName: '',
+    domain: '',
+    devContacts: '',
+    sreContacts: '',
+  })
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target
+    setFormData(prevState => ({
+      ...prevState,
+      [name]: value
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    try {
+      const response = await fetch('/api/services', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('Success:', result)
+      router.push(`/app/${formData.appName}`)
+    } catch (error) {
+      console.error('Error:', error)
+    }
+  }
+
+  return (
+    <Layout username="John Doe">
+      <div className="space-y-6">
+        <div className="flex items-center space-x-4">
+          <Link href="/" className="text-blue-600 hover:text-blue-800 transition-colors">
+            <FontAwesomeIcon icon={faArrowLeft} className="mr-2" />
+            Back
+          </Link>
+          <h1 className="text-3xl font-bold">Onboard New App</h1>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <Label htmlFor="appName">App Name</Label>
+              <Input
+                id="appName"
+                name="appName"
+                value={formData.appName}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="lifecycle">Lifecycle</Label>
+              <Input
+                id="lifecycle"
+                name="lifecycle"
+                value={formData.lifecycle}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="appDescription">App Description</Label>
+              <Textarea
+                id="appDescription"
+                name="appDescription"
+                value={formData.appDescription}
+                onChange={handleChange}
+                required
+                className="min-h-[100px]"
+              />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="impact">Impact</Label>
+              <Textarea
+                id="impact"
+                name="impact"
+                value={formData.impact}
+                onChange={handleChange}
+                required
+                className="min-h-[100px]"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="googleProjectName">Google Project Name</Label>
+              <Input
+                id="googleProjectName"
+                name="googleProjectName"
+                value={formData.googleProjectName}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="domain">Domain</Label>
+              <Input
+                id="domain"
+                name="domain"
+                value={formData.domain}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="devContacts">Dev Contacts (comma-separated)</Label>
+              <Input
+                id="devContacts"
+                name="devContacts"
+                value={formData.devContacts}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sreContacts">SRE Contacts (comma-separated)</Label>
+              <Input
+                id="sreContacts"
+                name="sreContacts"
+                value={formData.sreContacts}
+                onChange={handleChange}
+                required
+              />
+            </div>
+          </div>
+
+          <Button type="submit" className="w-full">Onboard App</Button>
+        </form>
+      </div>
+    </Layout>
+  )
+}
