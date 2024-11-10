@@ -1,17 +1,17 @@
-{activeTab === 'overview' && (
-              <div className="space-y-4">
-                <table className="w-full">
-                  <tbody>
-                    {overviewFields.map((field) => (
-                      <tr key={field} className="hover:bg-gray-50">
-                        <td className="py-2 font-medium">{field}</td>
-                        <td className="py-2">
-                          {editMode ? (
+{editMode ? (
                             field === 'appDescription' || field === 'impact' ? (
                               <Textarea
                                 value={editedDetails[field] as string}
                                 onChange={(e) => handleEdit(field, e.target.value)}
                                 className="w-full"
+                              />
+                            ) : field === 'devContacts' || field === 'sreContacts' ? (
+                              <Input
+                                type="text"
+                                value={(editedDetails[field] as string[])?.join(', ') || ''}
+                                onChange={(e) => handleEdit(field, e.target.value.split(',').map(item => item.trim()))}
+                                className="w-full"
+                                placeholder="Enter comma-separated values"
                               />
                             ) : (
                               <Input
@@ -22,12 +22,15 @@
                               />
                             )
                           ) : (
-                            <div className="whitespace-pre-wrap">{editedDetails[field] as string}</div>
+                            <div className="whitespace-pre-wrap">
+                              {field === 'devContacts' || field === 'sreContacts' ? (
+                                <ul className="list-disc list-inside">
+                                  {(editedDetails[field] as string[])?.map((contact, index) => (
+                                    <li key={index}>{contact}</li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                editedDetails[field] as string
+                              )}
+                            </div>
                           )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
