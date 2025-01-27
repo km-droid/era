@@ -1,33 +1,9 @@
-npx create-react-app store-rollout-tracker
-cd store-rollout-tracker
-npm install tailwindcss postcss autoprefixer @fortawesome/react-fontawesome @fortawesome/free-solid-svg-icons axios
-npx tailwindcss init -p
-
-
-module.exports = {
-  content: [
-    "./src/**/*.{js,jsx,ts,tsx}",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-Create the main App.js:
-
-javascript
-Copy
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faHome, faChartLine, faPlus, faUser, faEdit } from '@fortawesome/free-solid-svg-icons';
 import StoreDetails from './StoreDetails';
 import EditStore from './EditStore';
+import { getAllStores } from './lib/datastore'; // Import the Datastore function
 
 function App() {
   const [stores, setStores] = useState([]);
@@ -36,32 +12,39 @@ function App() {
   const [selectedStore, setSelectedStore] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
 
-  useEffect(() => {
-    const fetchStores = async () => {
-      try {
-        const response = await axios.get('https://your-datastore-api-endpoint/stores');
-        setStores(response.data);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
+  // Fetch stores from Google Cloud Datastore
+  const fetchStores = async () => {
+    try {
+      const stores = await getAllStores(); // Fetch stores from Datastore
+      setStores(stores);
+    } catch (err) {
+      setError(err.message); // Handle errors
+    } finally {
+      setLoading(false); // Stop loading
+    }
+  };
 
+  // Fetch stores on component mount
+  useEffect(() => {
     fetchStores();
   }, []);
 
+  // Handle store row click
   const handleStoreClick = (store) => {
     setSelectedStore(store);
   };
 
+  // Handle edit icon click
   const handleEditClick = (store) => {
     setSelectedStore(store);
     setIsEditing(true);
   };
 
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error}</div>;
+  // Display loading state
+  if (loading) return <div className="text-center p-4">Loading...</div>;
+
+  // Display error state
+  if (error) return <div className="text-center p-4 text-red-500">Error: {error}</div>;
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -77,6 +60,7 @@ function App() {
   );
 }
 
+// Header Component
 const Header = () => (
   <header className="bg-blue-600 text-white p-4 flex justify-between items-center">
     <div className="flex space-x-4">
@@ -91,6 +75,7 @@ const Header = () => (
   </header>
 );
 
+// Metrics Component
 const Metrics = () => (
   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
     <MetricCard title="Edge Rollout" value="40,689" />
@@ -100,6 +85,7 @@ const Metrics = () => (
   </div>
 );
 
+// MetricCard Component
 const MetricCard = ({ title, value }) => (
   <div className="bg-white p-4 rounded-lg shadow">
     <h3 className="text-gray-500">{title}</h3>
@@ -107,12 +93,14 @@ const MetricCard = ({ title, value }) => (
   </div>
 );
 
+// SearchBar Component
 const SearchBar = () => (
   <div className="mb-4">
     <input type="text" placeholder="Search Stores..." className="w-full p-2 border rounded" />
   </div>
 );
 
+// StoreTable Component
 const StoreTable = ({ stores, onStoreClick, onEditClick }) => (
   <div className="overflow-x-auto bg-white rounded-lg shadow">
     <table className="min-w-full">
@@ -126,7 +114,7 @@ const StoreTable = ({ stores, onStoreClick, onEditClick }) => (
         </tr>
       </thead>
       <tbody>
-        {stores.map(store => (
+        {stores.map((store) => (
           <tr key={store.id} className="hover:bg-gray-100 cursor-pointer" onClick={() => onStoreClick(store)}>
             <td className="p-2">{store.number}</td>
             <td className="p-2">{store.location}</td>
@@ -143,60 +131,3 @@ const StoreTable = ({ stores, onStoreClick, onEditClick }) => (
 );
 
 export default App;
-4. StoreDetails Component
-Create StoreDetails.js:
-
-javascript
-Copy
-import React from 'react';
-
-const StoreDetails = ({ store, onClose }) => (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
-    <div className="bg-white p-4 rounded-lg">
-      <h2 className="text-xl font-bold">{store.number}</h2>
-      <p>Location: {store.location}</p>
-      <p>Phase: {store.phase}</p>
-      <p>Status: {store.status}</p>
-      <button onClick={onClose} className="mt-4 bg-blue-500 text-white p-2 rounded">Close</button>
-    </div>
-  </div>
-);
-
-export default StoreDetails;
-5. EditStore Component
-Create EditStore.js:
-
-javascript
-Copy
-import React, { useState } from 'react';
-
-const EditStore = ({ store, onClose }) => {
-  const [formData, setFormData] = useState(store);
-
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // Submit the updated store data
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
-      <div className="bg-white p-4 rounded-lg">
-        <h2 className="text-xl font-bold">Edit Store</h2>
-        <form onSubmit={handleSubmit}>
-          <input type="text" name="location" value={formData.location} onChange={handleChange} className="w-full p-2 border rounded mb-2" />
-          <input type="text" name="phase" value={formData.phase} onChange={handleChange} className="w-full p-2 border rounded mb-2" />
-          <input type="text" name="status" value={formData.status} onChange={handleChange} className="w-full p-2 border rounded mb-2" />
-          <button type="submit" className="bg-blue-500 text-white p-2 rounded">Save</button>
-          <button type="button" onClick={onClose} className="ml-2 bg-gray-500 text-white p-2 rounded">Cancel</button>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-export default EditStore;
