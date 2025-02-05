@@ -1,114 +1,23 @@
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "os"
-    "time"
-
-    "cloud.google.com/go/pubsub"
-    "k8s.io/client-go/kubernetes"
-    "k8s.io/client-go/tools/clientcmd"
-    "k8s.io/client-go/util/homedir"
-    "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "k8s.io/api/core/v1"
-    "k8s.io/client-go/util/retry"
-)
-
-var (
-    projectID       = "your-google-cloud-project-id"
-    subscriptionID  = "your-pubsub-subscription-id"
-    kubeconfigPath  = "/path/to/kubeconfig" // Optional: If you want to use a custom kubeconfig file
-    namespace       = "default"             // Kubernetes namespace
-    podName         = "master-pod-name"     // Name of your master pod
-)
-
-func main() {
-    // Set up Pub/Sub client
-    ctx := context.Background()
-    client, err := pubsub.NewClient(ctx, projectID)
-    if err != nil {
-        log.Fatalf("Failed to create Pub/Sub client: %v", err)
-    }
-
-    sub := client.Subscription(subscriptionID)
-
-    // Set up Kubernetes client
-    kubeconfig := kubeconfigPath
-    if home := homedir.HomeDir(); home != "" {
-        kubeconfig = home + "/.kube/config" // Default kubeconfig path
-    }
-
-    config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-    if err != nil {
-        log.Fatalf("Failed to build Kubernetes config: %v", err)
-    }
-
-    kubeClient, err := kubernetes.NewForConfig(config)
-    if err != nil {
-        log.Fatalf("Failed to create Kubernetes client: %v", err)
-    }
-
-    // Receive messages from Pub/Sub
-    err = sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
-        fmt.Printf("Received message: %s\n", string(msg.Data))
-        msg.Ack()
-
-        // Trigger Kubernetes Job or execute command inside the master pod
-        err := runShellScriptInMasterPod(kubeClient, msg.Data)
-        if err != nil {
-            log.Printf("Failed to trigger Kubernetes Job: %v", err)
-        } else {
-            log.Printf("Kubernetes Job triggered successfully.")
-        }
-    })
-
-    if err != nil {
-        log.Fatalf("Failed to receive Pub/Sub messages: %v", err)
-    }
-}
-
-// runShellScriptInMasterPod executes a command inside the master pod using kubectl exec
-func runShellScriptInMasterPod(client *kubernetes.Clientset, msg []byte) error {
-    // Prepare the command to run the shell script
-    cmd := []string{"/bin/sh", "-c", "./master_script.sh " + string(msg)}
-
-    // Create an exec client and run the command in the master pod
-    podExec := client.CoreV1().Pods(namespace).GetExecClient()
-
-    // Execute the command inside the pod
-    _, err := podExec.Pod(podName).Exec(cmd...).StreamOptions(v1.StreamOptions{}).Execute()
-    return err
-}
-
-
-====================================================
-
-
-package main
-
-import (
 	"context"
 	"fmt"
 	"log"
 	"os"
 
 	"cloud.google.com/go/pubsub"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/api/batch/v1"
-	"k8s.io/client-go/util/homedir"
-	"github.com/google/uuid"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
-	projectID       = "your-google-cloud-project-id"
-	subscriptionID  = "your-pubsub-subscription-id"
-	namespace       = "default"   // Kubernetes namespace
-	kubeconfigPath  = "/path/to/kubeconfig" // Optional: If you want to use a custom kubeconfig file
-	shellImage      = "your-shell-script-container-image" // The image that contains the shell script
+	projectID      = "your-google-cloud-project-id"
+	subscriptionID = "your-pubsub-subscription-id"
+	kubeconfigPath = "/path/to/kubeconfig" // Optional: If you want to use a custom kubeconfig file
+	namespace      = "default"             // Kubernetes namespace
+	labelSelector  = "app=master"          // Label selector to find the master pod
 )
 
 func main() {
@@ -122,14 +31,11 @@ func main() {
 	sub := client.Subscription(subscriptionID)
 
 	// Set up Kubernetes client
-	kubeconfig := kubeconfigPath
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = home + "/.kube/config" // Default kubeconfig path
-	}
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		log.Fatalf("Failed to build Kubernetes config: %v", err)
 	}
+
 	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		log.Fatalf("Failed to create Kubernetes client: %v", err)
@@ -140,8 +46,17 @@ func main() {
 		fmt.Printf("Received message: %s\n", string(msg.Data))
 		msg.Ack()
 
-		// Trigger Kubernetes Job to execute the shell script
-		err := triggerKubernetesJob(kubeClient, msg.Data)
+		// Retrieve pod name dynamically based on label
+		podName, err := getPodNameByLabel(kubeClient)
+		if err != nil {
+			log.Printf("Failed to get pod name: %v", err)
+			return
+		}
+
+		fmt.Printf("Pod Name: %s\n", podName)
+
+		// Trigger Kubernetes Job or execute command inside the master pod
+		err = runShellScriptInMasterPod(kubeClient, podName, msg.Data)
 		if err != nil {
 			log.Printf("Failed to trigger Kubernetes Job: %v", err)
 		} else {
@@ -154,35 +69,33 @@ func main() {
 	}
 }
 
-// triggerKubernetesJob creates a Kubernetes Job that runs the shell script in the container
-func triggerKubernetesJob(client *kubernetes.Clientset, msg []byte) error {
-	jobName := "run-master-script-" + uuid.New().String() // Generate unique job name
-	cmd := []string{"/bin/sh", "-c", "./master_script.sh " + string(msg)} // The command to run in the pod
-
-	// Define the Kubernetes Job
-	job := &v1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: namespace,
-		},
-		Spec: v1.JobSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:    "shell-script-container",
-							Image:   shellImage, // The image that contains the shell script
-							Command: cmd,
-						},
-					},
-					RestartPolicy: corev1.RestartPolicyNever, // Don't restart the pod after it completes
-				},
-			},
-		},
+// getPodNameByLabel finds the pod by label selector and returns its name
+func getPodNameByLabel(client *kubernetes.Clientset) (string, error) {
+	// Get the list of pods in the specified namespace with the label selector
+	pods, err := client.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list pods: %v", err)
 	}
 
-	// Create the job in Kubernetes
-	_, err := client.BatchV1().Jobs(namespace).Create(context.TODO(), job, metav1.CreateOptions{})
-	return err
+	if len(pods.Items) == 0 {
+		return "", fmt.Errorf("no pods found with label %s", labelSelector)
+	}
+
+	// Return the first pod name
+	return pods.Items[0].Name, nil
 }
 
+// runShellScriptInMasterPod executes a command inside the master pod using kubectl exec
+func runShellScriptInMasterPod(client *kubernetes.Clientset, podName string, msg []byte) error {
+	// Prepare the command to run the shell script
+	cmd := []string{"/bin/sh", "-c", "./master_script.sh " + string(msg)}
+
+	// Create an exec client and run the command in the master pod
+	podExec := client.CoreV1().Pods(namespace).GetExecClient()
+
+	// Execute the command inside the pod
+	_, err := podExec.Pod(podName).Exec(cmd...).StreamOptions(metav1.StreamOptions{}).Execute()
+	return err
+}
