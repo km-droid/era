@@ -7,9 +7,10 @@ import (
 	"os"
 
 	"cloud.google.com/go/pubsub"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 var (
@@ -19,6 +20,10 @@ var (
 	namespace      = "default"             // Kubernetes namespace
 	labelSelector  = "app=master"          // Label selector to find the master pod
 )
+
+type PubSubMessage struct {
+	ScriptArgs map[string]string `json:"script_args"` // Assuming the JSON contains a map of arguments
+}
 
 func main() {
 	// Set up Pub/Sub client
@@ -46,6 +51,13 @@ func main() {
 		fmt.Printf("Received message: %s\n", string(msg.Data))
 		msg.Ack()
 
+		// Parse the JSON message
+		var parsedMessage PubSubMessage
+		if err := json.Unmarshal(msg.Data, &parsedMessage); err != nil {
+			log.Printf("Failed to parse Pub/Sub message: %v", err)
+			return
+		}
+
 		// Retrieve pod name dynamically based on label
 		podName, err := getPodNameByLabel(kubeClient)
 		if err != nil {
@@ -56,7 +68,7 @@ func main() {
 		fmt.Printf("Pod Name: %s\n", podName)
 
 		// Trigger Kubernetes Job or execute command inside the master pod
-		err = runShellScriptInMasterPod(kubeClient, podName, msg.Data)
+		err = runShellScriptInMasterPod(kubeClient, podName, parsedMessage.ScriptArgs)
 		if err != nil {
 			log.Printf("Failed to trigger Kubernetes Job: %v", err)
 		} else {
@@ -68,6 +80,44 @@ func main() {
 		log.Fatalf("Failed to receive Pub/Sub messages: %v", err)
 	}
 }
+
+// getPodNameByLabel finds the pod by label selector and returns its name
+func getPodNameByLabel(client *kubernetes.Clientset) (string, error) {
+	// Get the list of pods in the specified namespace with the label selector
+	pods, err := client.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list pods: %v", err)
+	}
+
+	if len(pods.Items) == 0 {
+		return "", fmt.Errorf("no pods found with label %s", labelSelector)
+	}
+
+	// Return the first pod name
+	return pods.Items[0].Name, nil
+}
+
+// runShellScriptInMasterPod executes a command inside the master pod using kubectl exec
+func runShellScriptInMasterPod(client *kubernetes.Clientset, podName string, scriptArgs map[string]string) error {
+	// Prepare the arguments to pass to the script
+	args := ""
+	for key, value := range scriptArgs {
+		args += fmt.Sprintf("--%s=%s ", key, value)
+	}
+
+	// Prepare the command to run the shell script
+	cmd := []string{"/bin/sh", "-c", "./master_script.sh " + args}
+
+	// Execute the command inside the pod using kubectl exec
+	execClient := client.CoreV1().Pods(namespace).GetExecClient()
+	_, err := execClient.Pod(podName).Exec(
+		cmd...).StreamOptions(metav1.StreamOptions{}).Execute()
+
+	return err
+}
+
 
 // getPodNameByLabel finds the pod by label selector and returns its name
 func getPodNameByLabel(client *kubernetes.Clientset) (string, error) {
