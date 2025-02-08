@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/util/wait"
+	"os/exec"
 )
 
 var (
@@ -110,16 +113,116 @@ func runShellScriptInMasterPod(client *kubernetes.Clientset, podName string, scr
 	// Prepare the command to run the shell script
 	cmd := []string{"/bin/sh", "-c", "./master_script.sh " + args}
 
-	// Execute the command inside the pod using kubectl exec
-	execClient := client.CoreV1().Pods(namespace).GetExecClient()
-	_, err := execClient.Pod(podName).Exec(
-		cmd...).StreamOptions(metav1.StreamOptions{}).Execute()
+	// Use the kubectl exec equivalent to execute commands inside the pod
+	command := fmt.Sprintf("kubectl exec %s -- %s", podName, cmd[1])
 
-	return err
+	// Execute the command inside the pod
+	cmdExec := exec.Command("sh", "-c", command)
+	output, err := cmdExec.CombinedOutput()
+
+	if err != nil {
+		log.Printf("Error executing command: %v", err)
+		return err
+	}
+
+	// Output the result of the execution
+	fmt.Printf("Output from shell script: %s\n", output)
+	return nil
 }
 
-====================================================
 
+====================================================
+//ds
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os/exec"
+
+	"cloud.google.com/go/pubsub"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Create a Pub/Sub client
+	client, err := pubsub.NewClient(ctx, "your-project-id")
+	if err != nil {
+		log.Fatalf("Failed to create Pub/Sub client: %v", err)
+	}
+	defer client.Close()
+
+	// Subscribe to the Pub/Sub topic
+	sub := client.Subscription("your-subscription-id")
+	err = sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
+		log.Printf("Received message: %s\n", string(msg.Data))
+
+		// Execute the shell script on the target pod
+		err := executeShellScriptOnPod("target-pod-name", "target-namespace", "your-shell-script.sh")
+		if err != nil {
+			log.Printf("Failed to execute shell script: %v", err)
+		} else {
+			log.Println("Shell script executed successfully")
+		}
+
+		// Acknowledge the message
+		msg.Ack()
+	})
+	if err != nil {
+		log.Fatalf("Failed to receive messages: %v", err)
+	}
+}
+
+func executeShellScriptOnPod(podName, namespace, scriptName string) error {
+	// Create the in-cluster config
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return fmt.Errorf("failed to create in-cluster config: %v", err)
+	}
+
+	// Create the clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %v", err)
+	}
+
+	// Command to execute the shell script in the target pod
+	cmd := []string{"/bin/sh", scriptName}
+
+	// Execute the command in the target pod
+	req := clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace).
+		SubResource("exec").
+		Param("container", "your-container-name") // Replace with your container name if necessary
+	req.VersionedParams(&corev1.PodExecOptions{
+		Command: cmd,
+		Stdin:   false,
+		Stdout:  true,
+		Stderr:  true,
+		TTY:     false,
+	}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	if err != nil {
+		return fmt.Errorf("failed to create SPDY executor: %v", err)
+	}
+
+	err = executor.Stream(remotecommand.StreamOptions{
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to stream command output: %v", err)
+	}
+
+	return nil
+}
 
 
 ===========
