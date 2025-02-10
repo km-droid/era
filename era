@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"cloud.google.com/go/pubsub"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/apimachinery/pkg/util/wait" // Correct import for wait package
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/util/wait"
 	"os/exec"
 )
 
@@ -113,21 +114,35 @@ func runShellScriptInMasterPod(client *kubernetes.Clientset, podName string, scr
 	// Prepare the command to run the shell script
 	cmd := []string{"/bin/sh", "-c", "./master_script.sh " + args}
 
-	// Use the kubectl exec equivalent to execute commands inside the pod
-	command := fmt.Sprintf("kubectl exec %s -- %s", podName, cmd[1])
+	// Retry logic with wait.PollImmediate
+	err := wait.PollImmediate(time.Second, 10*time.Second, func() (bool, error) {
+		// Here you can check if the pod is ready or any other condition you want
+		// Example: try to run the script inside the pod until it succeeds
+		return executeInPod(podName, cmd)
+	})
 
-	// Execute the command inside the pod
+	if err != nil {
+		log.Printf("Failed to execute shell script in pod: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// executeInPod runs the shell script inside the Kubernetes pod
+func executeInPod(podName string, cmd []string) (bool, error) {
+	command := fmt.Sprintf("kubectl exec %s -- %s", podName, cmd[1])
 	cmdExec := exec.Command("sh", "-c", command)
 	output, err := cmdExec.CombinedOutput()
 
 	if err != nil {
 		log.Printf("Error executing command: %v", err)
-		return err
+		return false, err
 	}
 
 	// Output the result of the execution
 	fmt.Printf("Output from shell script: %s\n", output)
-	return nil
+	return true, nil
 }
 
 
