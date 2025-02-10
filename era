@@ -1,3 +1,48 @@
+
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+)
+
+const scriptPath = "/scripts/hello.sh"
+
+// handler function to execute the hello.sh script
+func runScriptHandler(w http.ResponseWriter, r *http.Request) {
+	// Execute the hello.sh script
+	cmd := exec.Command("/bin/sh", scriptPath, "arg1", "arg2")
+
+	// Capture the output and error (if any)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to execute script: %v\n%s", err, output), http.StatusInternalServerError)
+		return
+	}
+
+	// Send the successful output back to the client
+	w.WriteHeader(http.StatusOK)
+	w.Write(output)
+}
+
+func main() {
+	// Serve the /run-script endpoint
+	http.HandleFunc("/run-script", runScriptHandler)
+
+	// Start the server on port 8080
+	log.Println("Server is starting on port 8080...")
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		log.Fatalf("Error starting server: %v", err)
+	}
+}
+
+=========
+
+
 package main
 
 import (
