@@ -6,22 +6,30 @@ import (
 	"fmt"
 	"log"
 
+	// Newer Go client for Compute Engine
 	compute "cloud.google.com/go/compute/apiv1"
-	"github.com/golang/protobuf/proto" // or "google.golang.org/protobuf/proto" in newer code
-	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
+	// Protobuf messages for the Compute Engine API
+	computepb "cloud.google.com/go/compute/apiv1/computepb"
 )
 
-func main() {
-	// Define command-line flags
-	projectID := flag.String("project", "", "GCP project ID")
-	region := flag.String("region", "", "Region of the internal HTTP(S) load balancer")
-	urlMapName := flag.String("urlmap", "", "Name of the URL map to patch")
+// Helper functions to simplify pointer creation
+func stringPtr(s string) *string    { return &s }
+func int64Ptr(i int64) *int64       { return &i }
+func uint64Ptr(u uint64) *uint64    { return &u }
+func float64Ptr(f float64) *float64 { return &f }
 
-	// Define fault injection parameters as flags (optional)
-	delaySeconds := flag.Int64("delay-seconds", 2, "Number of seconds to delay")
+func main() {
+	// Set up command-line flags
+	projectID := flag.String("project", "", "GCP project ID")
+	region := flag.String("region", "", "Region of the INTERNAL HTTP(S) LB (e.g., us-central1)")
+	urlMapName := flag.String("urlmap", "", "Name of the regional URL map to patch")
+	delaySeconds := flag.Int64("delay-seconds", 2, "Number of seconds to delay requests")
 	delayPercentage := flag.Float64("delay-pct", 50, "Percentage of requests to delay")
 	abortStatus := flag.Int64("abort-status", 503, "HTTP status code to inject")
 	abortPercentage := flag.Float64("abort-pct", 10, "Percentage of requests to abort")
+
+	// Flag to remove fault injection (rollback to default)
+	rollbackDefault := flag.Bool("rollback-default", false, "If true, removes fault injection (revert to defaults)")
 
 	flag.Parse()
 
@@ -32,31 +40,43 @@ func main() {
 
 	ctx := context.Background()
 
-	// Create a client for interacting with the Compute Engine URL Maps API
+	// Create a RegionUrlMaps client (used for internal HTTP(S) LB in a specific region)
 	urlMapClient, err := compute.NewRegionUrlMapsRESTClient(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create URL Maps client: %v", err)
+		log.Fatalf("Failed to create RegionUrlMaps client: %v", err)
 	}
 	defer urlMapClient.Close()
 
-	// Build the updated UrlMap resource with fault injection
+	// Build the updated UrlMap resource
 	updatedUrlMap := &computepb.UrlMap{
-		Name: proto.String(*urlMapName),
+		Name: stringPtr(*urlMapName),
 		DefaultRouteAction: &computepb.HttpRouteAction{
-			FaultInjectionPolicy: &computepb.HttpFaultInjection{
-				Delay: &computepb.HttpFaultDelay{
-					FixedDelay: &computepb.Duration{Seconds: proto.Int64(*delaySeconds)},
-					Percentage: proto.Float64(*delayPercentage),
-				},
-				Abort: &computepb.HttpFaultAbort{
-					HttpStatus: proto.Int64(*abortStatus),
-					Percentage: proto.Float64(*abortPercentage),
-				},
-			},
+			// We'll conditionally set FaultInjectionPolicy below
 		},
 	}
 
-	// Patch the existing region URL map
+	if *rollbackDefault {
+		// Remove fault injection by omitting FaultInjectionPolicy
+		log.Println("[INFO] Removing fault injection to revert the load balancer to default settings.")
+	} else {
+		// Apply fault injection with the given flags
+		updatedUrlMap.DefaultRouteAction.FaultInjectionPolicy = &computepb.HttpRouteAction_FaultInjectionPolicy{
+			Delay: &computepb.HttpRouteAction_FaultInjectionPolicy_Delay{
+				FixedDelay: &computepb.Duration{
+					Seconds: uint64Ptr(uint64(*delaySeconds)), // must be uint64
+				},
+				Percentage: float64Ptr(*delayPercentage),
+			},
+			Abort: &computepb.HttpRouteAction_FaultInjectionPolicy_Abort{
+				HttpStatus: int64Ptr(*abortStatus),
+				Percentage: float64Ptr(*abortPercentage),
+			},
+		}
+		log.Printf("[INFO] Setting fault injection: %ds delay @ %.1f%%, HTTP %d errors @ %.1f%%",
+			*delaySeconds, *delayPercentage, *abortStatus, *abortPercentage)
+	}
+
+	// Patch the existing regional URL map with our new or removed fault injection
 	op, err := urlMapClient.Patch(ctx, &computepb.PatchRegionUrlMapRequest{
 		Project:        *projectID,
 		Region:         *region,
@@ -69,8 +89,12 @@ func main() {
 
 	// Wait for the patch operation to complete
 	if err := op.Wait(ctx); err != nil {
-		log.Fatalf("Error waiting for patch operation to complete: %v", err)
+		log.Fatalf("Error while waiting for patch operation: %v", err)
 	}
 
-	fmt.Println("Successfully updated URL map with fault injection settings.")
+	if *rollbackDefault {
+		fmt.Println("Successfully reverted URL map to default (no fault injection).")
+	} else {
+		fmt.Println("Successfully updated URL map with fault injection settings.")
+	}
 }
