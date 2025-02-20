@@ -1,414 +1,69 @@
-
-package main
-
-import (
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"os/exec"
-)
-
-const scriptPath = "/scripts/hello.sh"
-
-// handler function to execute the hello.sh script
-func runScriptHandler(w http.ResponseWriter, r *http.Request) {
-	// Execute the hello.sh script
-	cmd := exec.Command("/bin/sh", scriptPath, "arg1", "arg2")
-
-	// Capture the output and error (if any)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to execute script: %v\n%s", err, output), http.StatusInternalServerError)
-		return
-	}
-
-	// Send the successful output back to the client
-	w.WriteHeader(http.StatusOK)
-	w.Write(output)
-}
-
-func main() {
-	// Serve the /run-script endpoint
-	http.HandleFunc("/run-script", runScriptHandler)
-
-	// Start the server on port 8080
-	log.Println("Server is starting on port 8080...")
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		log.Fatalf("Error starting server: %v", err)
-	}
-}
-
-=========
-
-
-package main
-
-import (
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"os/exec"
-)
-
-const scriptPath = "/scripts/hello.sh"
-
-// handler function to execute the hello.sh script
-func runScriptHandler(w http.ResponseWriter, r *http.Request) {
-	// Execute the hello.sh script
-	cmd := exec.Command("/bin/sh", scriptPath, "arg1", "arg2")
-
-	// Capture the output and error (if any)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to execute script: %v\n%s", err, output), http.StatusInternalServerError)
-		return
-	}
-
-	// Send the successful output back to the client
-	w.WriteHeader(http.StatusOK)
-	w.Write(output)
-}
-
-func main() {
-	// Serve the /run-script endpoint
-	http.HandleFunc("/run-script", runScriptHandler)
-
-	// Start the server on port 8080
-	log.Println("Server is starting on port 8080...")
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		log.Fatalf("Error starting server: %v", err)
-	}
-}
-
-=====
-package main
-
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"os"
-	"time"
-
-	"cloud.google.com/go/pubsub"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/apimachinery/pkg/util/wait" // Correct import for wait package
-	corev1 "k8s.io/api/core/v1"
-	"os/exec"
-)
-
-var (
-	projectID      = "your-google-cloud-project-id"
-	subscriptionID = "your-pubsub-subscription-id"
-	kubeconfigPath = "/path/to/kubeconfig" // Optional: If you want to use a custom kubeconfig file
-	namespace      = "default"             // Kubernetes namespace
-	labelSelector  = "app=master"          // Label selector to find the master pod
-)
-
-type PubSubMessage struct {
-	ScriptArgs map[string]string `json:"script_args"` // Assuming the JSON contains a map of arguments
-}
-
-func main() {
-	// Set up Pub/Sub client
-	ctx := context.Background()
-	client, err := pubsub.NewClient(ctx, projectID)
-	if err != nil {
-		log.Fatalf("Failed to create Pub/Sub client: %v", err)
-	}
-
-	sub := client.Subscription(subscriptionID)
-
-	// Set up Kubernetes client
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		log.Fatalf("Failed to build Kubernetes config: %v", err)
-	}
-
-	kubeClient, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		log.Fatalf("Failed to create Kubernetes client: %v", err)
-	}
-
-	// Receive messages from Pub/Sub
-	err = sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
-		fmt.Printf("Received message: %s\n", string(msg.Data))
-		msg.Ack()
-
-		// Parse the JSON message
-		var parsedMessage PubSubMessage
-		if err := json.Unmarshal(msg.Data, &parsedMessage); err != nil {
-			log.Printf("Failed to parse Pub/Sub message: %v", err)
-			return
-		}
-
-		// Retrieve pod name dynamically based on label
-		podName, err := getPodNameByLabel(kubeClient)
-		if err != nil {
-			log.Printf("Failed to get pod name: %v", err)
-			return
-		}
-
-		fmt.Printf("Pod Name: %s\n", podName)
-
-		// Trigger Kubernetes Job or execute command inside the master pod
-		err = runShellScriptInMasterPod(kubeClient, podName, parsedMessage.ScriptArgs)
-		if err != nil {
-			log.Printf("Failed to trigger Kubernetes Job: %v", err)
-		} else {
-			log.Printf("Kubernetes Job triggered successfully.")
-		}
-	})
-
-	if err != nil {
-		log.Fatalf("Failed to receive Pub/Sub messages: %v", err)
-	}
-}
-
-// getPodNameByLabel finds the pod by label selector and returns its name
-func getPodNameByLabel(client *kubernetes.Clientset) (string, error) {
-	// Get the list of pods in the specified namespace with the label selector
-	pods, err := client.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to list pods: %v", err)
-	}
-
-	if len(pods.Items) == 0 {
-		return "", fmt.Errorf("no pods found with label %s", labelSelector)
-	}
-
-	// Return the first pod name
-	return pods.Items[0].Name, nil
-}
-
-// runShellScriptInMasterPod executes a command inside the master pod using kubectl exec
-func runShellScriptInMasterPod(client *kubernetes.Clientset, podName string, scriptArgs map[string]string) error {
-	// Prepare the arguments to pass to the script
-	args := ""
-	for key, value := range scriptArgs {
-		args += fmt.Sprintf("--%s=%s ", key, value)
-	}
-
-	// Prepare the command to run the shell script
-	cmd := []string{"/bin/sh", "-c", "./master_script.sh " + args}
-
-	// Retry logic with wait.PollImmediate
-	err := wait.PollImmediate(time.Second, 10*time.Second, func() (bool, error) {
-		// Here you can check if the pod is ready or any other condition you want
-		// Example: try to run the script inside the pod until it succeeds
-		return executeInPod(podName, cmd)
-	})
-
-	if err != nil {
-		log.Printf("Failed to execute shell script in pod: %v", err)
-		return err
-	}
-
-	return nil
-}
-
-// executeInPod runs the shell script inside the Kubernetes pod
-func executeInPod(podName string, cmd []string) (bool, error) {
-	command := fmt.Sprintf("kubectl exec %s -- %s", podName, cmd[1])
-	cmdExec := exec.Command("sh", "-c", command)
-	output, err := cmdExec.CombinedOutput()
-
-	if err != nil {
-		log.Printf("Error executing command: %v", err)
-		return false, err
-	}
-
-	// Output the result of the execution
-	fmt.Printf("Output from shell script: %s\n", output)
-	return true, nil
-}
-
-
-====================================================
-//ds
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"os/exec"
 
-	"cloud.google.com/go/pubsub"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
+	compute "cloud.google.com/go/compute/apiv1"
+	"github.com/golang/protobuf/proto" // or use "google.golang.org/protobuf/proto" in newer code
+	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
 )
 
 func main() {
 	ctx := context.Background()
 
-	// Create a Pub/Sub client
-	client, err := pubsub.NewClient(ctx, "your-project-id")
+	// Create a client for interacting with the Compute Engine URL Maps API
+	urlMapClient, err := compute.NewRegionUrlMapsRESTClient(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create Pub/Sub client: %v", err)
+		log.Fatalf("Failed to create URL Maps client: %v", err)
 	}
-	defer client.Close()
+	defer urlMapClient.Close()
 
-	// Subscribe to the Pub/Sub topic
-	sub := client.Subscription("your-subscription-id")
-	err = sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
-		log.Printf("Received message: %s\n", string(msg.Data))
+	// Specify your GCP project and region
+	projectID := "my-gcp-project"
+	region := "us-central1"
 
-		// Execute the shell script on the target pod
-		err := executeShellScriptOnPod("target-pod-name", "target-namespace", "your-shell-script.sh")
-		if err != nil {
-			log.Printf("Failed to execute shell script: %v", err)
-		} else {
-			log.Println("Shell script executed successfully")
-		}
+	// The name of the existing URL map resource used by your internal HTTP(S) LB
+	urlMapName := "my-ilb-urlmap"
 
-		// Acknowledge the message
-		msg.Ack()
+	// Construct a UrlMap object with Fault Injection settings in the default route action
+	// (You could also apply fault injection to specific pathMatchers / routeRules if desired.)
+	updatedUrlMap := &computepb.UrlMap{
+		Name: proto.String(urlMapName),
+		// Add or modify the default Route Action
+		DefaultRouteAction: &computepb.HttpRouteAction{
+			FaultInjectionPolicy: &computepb.HttpFaultInjection{
+				// Introduce a 2-second delay in 50% of requests
+				Delay: &computepb.HttpFaultDelay{
+					FixedDelay: &computepb.Duration{Seconds: proto.Int64(2)},
+					Percentage: proto.Float64(50),
+				},
+				// Abort with HTTP 503 in 10% of requests
+				Abort: &computepb.HttpFaultAbort{
+					HttpStatus: proto.Int64(503),
+					Percentage: proto.Float64(10),
+				},
+			},
+		},
+	}
+
+	// Patch the existing region URL map with the new fault injection config
+	op, err := urlMapClient.Patch(ctx, &computepb.PatchRegionUrlMapRequest{
+		Project:        projectID,
+		Region:         region,
+		UrlMap:         urlMapName,
+		UrlMapResource: updatedUrlMap,
 	})
 	if err != nil {
-		log.Fatalf("Failed to receive messages: %v", err)
+		log.Fatalf("Patch request failed: %v", err)
 	}
+
+	// Wait for the patch operation to complete
+	err = op.Wait(ctx)
+	if err != nil {
+		log.Fatalf("Error while waiting for patch operation to complete: %v", err)
+	}
+
+	fmt.Println("Successfully updated URL map with fault injection settings.")
 }
-
-func executeShellScriptOnPod(podName, namespace, scriptName string) error {
-	// Create the in-cluster config
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return fmt.Errorf("failed to create in-cluster config: %v", err)
-	}
-
-	// Create the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %v", err)
-	}
-
-	// Command to execute the shell script in the target pod
-	cmd := []string{"/bin/sh", scriptName}
-
-	// Execute the command in the target pod
-	req := clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(podName).
-		Namespace(namespace).
-		SubResource("exec").
-		Param("container", "your-container-name") // Replace with your container name if necessary
-	req.VersionedParams(&corev1.PodExecOptions{
-		Command: cmd,
-		Stdin:   false,
-		Stdout:  true,
-		Stderr:  true,
-		TTY:     false,
-	}, scheme.ParameterCodec)
-
-	executor, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
-	if err != nil {
-		return fmt.Errorf("failed to create SPDY executor: %v", err)
-	}
-
-	err = executor.Stream(remotecommand.StreamOptions{
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to stream command output: %v", err)
-	}
-
-	return nil
-}
-
-
-===========
-
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: pubsub-handler
-  labels:
-    app: pubsub-handler
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: pubsub-handler
-  template:
-    metadata:
-      labels:
-        app: pubsub-handler
-    spec:
-      containers:
-        - name: pubsub-handler
-          image: gcr.io/your-project-id/pubsub-handler:latest
-          env:
-            - name: GOOGLE_APPLICATION_CREDENTIALS
-              value: /etc/gcloud/key.json
-            - name: KUBECONFIG
-              value: /etc/kubernetes/kubeconfig
-          volumeMounts:
-            - name: gcloud-key
-              mountPath: /etc/gcloud
-              readOnly: true
-            - name: kubeconfig
-              mountPath: /etc/kubernetes
-              readOnly: true
-      volumes:
-        - name: gcloud-key
-          secret:
-            secretName: gcloud-service-account-key
-        - name: kubeconfig
-          secret:
-            secretName: kubeconfig
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: pubsub-handler
-spec:
-  selector:
-    app: pubsub-handler
-  ports:
-    - protocol: TCP
-      port: 8080
-      targetPort: 8080
-
-
-===============================
-
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  # Name of the role
-  name: exec-pod
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list", "get", "exec"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: exec-pod-binding
-subjects:
-  - kind: ServiceAccount
-    name: pubsub-handler
-    namespace: default
-roleRef:
-  kind: ClusterRole
-  name: exec-pod
-  apiGroup: rbac.authorization.k8s.io
-
-
-
-
-
