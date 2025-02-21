@@ -1,35 +1,5 @@
-FROM ubuntu:22.04
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cups \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Example for enabling remote admin and web interface
-RUN sed -i 's/Browsing Off/Browsing On/' /etc/cups/cupsd.conf \
-    && sed -i '/WebInterface Yes/s/^#//g' /etc/cups/cupsd.conf \
-    && echo "ServerAlias *" >> /etc/cups/cupsd.conf \
-    && sed -i '/^<Location \/>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cups/cupsd.conf \
-    && sed -i '/^<Location \/admin>/, /^<\/Location>/ s/Require user @SYSTEM/Require valid-user/g' /etc/cups/cupsd.conf
-
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Change this if desired
-EXPOSE 8080
-
-CMD ["/entrypoint.sh"]
-
-
-#!/usr/bin/env bash
-set -e
-
-# If PORT is not set, fall back to 8080
-PORT="${PORT:-8080}"
-
-# Modify cupsd.conf to listen on 0.0.0.0:$PORT
-sed -i "s/Listen localhost:631/Listen 0.0.0.0:${PORT}/" /etc/cups/cupsd.conf || true
-sed -i "s/Port 631/Port ${PORT}/" /etc/cups/cupsd.conf || true
-
-# Start CUPS in foreground
-exec cupsd -f
+RUN sed -i '/^<Location \/>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cups/cupsd.conf \
+ && sed -i '/^<Location \/>/,/^<\/Location>/ s/Order allow,deny/Order deny,allow/g' /etc/cups/cupsd.conf \
+ && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Require user @SYSTEM/Require valid-user/g' /etc/cups/cupsd.conf \
+ && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cups/cupsd.conf \
+ && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Order allow,deny/Order deny,allow/g' /etc/cups/cupsd.conf
