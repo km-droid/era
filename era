@@ -1,162 +1,35 @@
-package main
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cups \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-import (
-	"context"
-	"flag"
-	"fmt"
-	"log"
+# Example for enabling remote admin and web interface
+RUN sed -i 's/Browsing Off/Browsing On/' /etc/cups/cupsd.conf \
+    && sed -i '/WebInterface Yes/s/^#//g' /etc/cups/cupsd.conf \
+    && echo "ServerAlias *" >> /etc/cups/cupsd.conf \
+    && sed -i '/^<Location \/>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cups/cupsd.conf \
+    && sed -i '/^<Location \/admin>/, /^<\/Location>/ s/Require user @SYSTEM/Require valid-user/g' /etc/cups/cupsd.conf
 
-	compute "cloud.google.com/go/compute/apiv1"
-	computepb "cloud.google.com/go/compute/apiv1/computepb"
-	"google.golang.org/protobuf/proto"
-)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-// UpdateILBUrlMapFaultInjection uses UpdateRegionUrlMap (rather than Patch)
-// to either set or remove fault injection in a single, full overwrite.
-//
-// - If rollback == true, it removes any existing fault injection (FaultInjectionPolicy = nil).
-// - Otherwise, it conditionally sets Delay/Abort only for the parameters that are >= 0.
-func UpdateILBUrlMapFaultInjection(
-	ctx context.Context,
-	urlMapClient *compute.RegionUrlMapsClient,
-	project, region, urlMap string,
-	rollback bool,
+# Change this if desired
+EXPOSE 8080
 
-	delaySeconds int64,
-	delayPercentage float64,
-	abortStatus int64,
-	abortPercentage float64,
-) error {
+CMD ["/entrypoint.sh"]
 
-	// 1) Get the existing URL map resource
-	existing, err := urlMapClient.Get(ctx, &computepb.GetRegionUrlMapRequest{
-		Project: project,
-		Region:  region,
-		UrlMap:  urlMap,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to get existing URL map: %w", err)
-	}
 
-	// Ensure DefaultRouteAction is not nil
-	if existing.DefaultRouteAction == nil {
-		existing.DefaultRouteAction = &computepb.HttpRouteAction{}
-	}
+#!/usr/bin/env bash
+set -e
 
-	if rollback {
-		// ----------------------
-		// Remove fault injection
-		// ----------------------
-		log.Println("[INFO] Rolling back to default by removing FaultInjectionPolicy.")
-		existing.DefaultRouteAction.FaultInjectionPolicy = nil
+# If PORT is not set, fall back to 8080
+PORT="${PORT:-8080}"
 
-	} else {
-		// ------------------------------------------------------------
-		// Conditionally build FaultInjectionPolicy based on user input
-		// ------------------------------------------------------------
-		policy := &computepb.HttpRouteAction_FaultInjectionPolicy{}
-		var setDelay, setAbort bool
+# Modify cupsd.conf to listen on 0.0.0.0:$PORT
+sed -i "s/Listen localhost:631/Listen 0.0.0.0:${PORT}/" /etc/cups/cupsd.conf || true
+sed -i "s/Port 631/Port ${PORT}/" /etc/cups/cupsd.conf || true
 
-		// If user supplied non-negative values for delaySeconds & delayPercentage
-		if delaySeconds >= 0 && delayPercentage >= 0 {
-			setDelay = true
-			log.Printf("[INFO] Configuring delay: %ds at %.1f%%", delaySeconds, delayPercentage)
-
-			// Build the Delay config
-			policy.Delay = &computepb.HttpRouteAction_FaultInjectionPolicy_Delay{
-				FixedDelay: &computepb.Duration{
-					Seconds: &delaySeconds, // (If your proto expects uint64, cast it accordingly)
-				},
-				Percentage: &delayPercentage,
-			}
-		}
-
-		// If user supplied non-negative values for abortStatus & abortPercentage
-		if abortStatus >= 0 && abortPercentage >= 0 {
-			setAbort = true
-			log.Printf("[INFO] Configuring abort: HTTP %d at %.1f%%", abortStatus, abortPercentage)
-
-			// Build the Abort config
-			policy.Abort = &computepb.HttpRouteAction_FaultInjectionPolicy_Abort{
-				HttpStatus: proto.Uint32(uint32(abortStatus)),
-				Percentage: &abortPercentage,
-			}
-		}
-
-		// If neither delay nor abort was actually set, exit with message
-		if !setDelay && !setAbort {
-			return fmt.Errorf("no valid fault injection parameters were provided (and --rollback-default=false)")
-		}
-
-		// Apply the partial or complete policy
-		existing.DefaultRouteAction.FaultInjectionPolicy = policy
-	}
-
-	// 2) Update the URL map with the new (or removed) fault injection
-	op, err := urlMapClient.Update(ctx, &computepb.UpdateRegionUrlMapRequest{
-		Project:        project,
-		Region:         region,
-		UrlMap:         urlMap,
-		UrlMapResource: existing,
-	})
-	if err != nil {
-		return fmt.Errorf("update request failed: %w", err)
-	}
-
-	// 3) Wait for the update to complete
-	if err := op.Wait(ctx); err != nil {
-		return fmt.Errorf("error while waiting for update operation: %w", err)
-	}
-
-	// Logging success messages
-	if rollback {
-		log.Println("[INFO] Successfully reverted URL map to default (no fault injection).")
-	} else {
-		log.Println("[INFO] Successfully updated URL map with new fault injection settings.")
-	}
-	return nil
-}
-
-func main() {
-	// Remove the default values by using -1 as a sentinel
-	projectID := flag.String("project", "", "GCP project ID")
-	region := flag.String("region", "", "Region of the INTERNAL HTTP(S) LB (e.g. us-central1)")
-	urlMapName := flag.String("urlmap", "", "Name of the regional URL map to update")
-
-	// Use -1 so we know user hasn't specified them if they remain -1 after parsing
-	delaySeconds := flag.Int64("delay-seconds", -1, "Number of seconds to delay requests (>=0 if desired)")
-	delayPct := flag.Float64("delay-pct", -1, "Percentage of requests to delay (>=0 if desired)")
-	abortStatus := flag.Int64("abort-status", -1, "HTTP status code to inject (>=0 if desired)")
-	abortPct := flag.Float64("abort-pct", -1, "Percentage of requests to abort (>=0 if desired)")
-
-	rollbackDefault := flag.Bool("rollback-default", false, "Remove fault injection if true")
-
-	flag.Parse()
-
-	// Basic validation
-	if *projectID == "" || *region == "" || *urlMapName == "" {
-		log.Fatalf("You must provide --project, --region, and --urlmap flags.")
-	}
-
-	ctx := context.Background()
-	urlMapClient, err := compute.NewRegionUrlMapsRESTClient(ctx)
-	if err != nil {
-		log.Fatalf("Failed to create RegionUrlMaps client: %v", err)
-	}
-	defer urlMapClient.Close()
-
-	if err := UpdateILBUrlMapFaultInjection(
-		ctx,
-		urlMapClient,
-		*projectID,
-		*region,
-		*urlMapName,
-		*rollbackDefault,
-		*delaySeconds,
-		*delayPct,
-		*abortStatus,
-		*abortPct,
-	); err != nil {
-		log.Fatalf("Error updating fault injection: %v", err)
-	}
-}
+# Start CUPS in foreground
+exec cupsd -f
