@@ -4,167 +4,229 @@ RUN sed -i '/^<Location \/>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cu
  && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cups/cupsd.conf \
  && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Order allow,deny/Order deny,allow/g' /etc/cups/cupsd.conf
 
+.
+├── .github
+│   └── workflows
+│       └── generate-and-build.yml  # The GitHub Actions workflow
+├── Dockerfile.base
+├── Dockerfile.final
+├── printers.list
+└── README.md
 
 
+# Dockerfile.base
+FROM ubuntu:22.04
 
-name: Generate CUPS printers.conf
+ENV DEBIAN_FRONTEND=noninteractive
 
-on:
-  pull_request:
-    types: [opened, synchronize]
-  # You could also allow manual triggers:
-  # workflow_dispatch:
+# Install CUPS
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cups \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-jobs:
-  generate-cups-config:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-
-      # Step 1: Build or pull a base image that has CUPS installed
-      - name: Build base CUPS image
-        run: |
-          docker build -t base-cups -f Dockerfile.base .
-
-      # Step 2: Start an ephemeral container from base-cups
-      - name: Start ephemeral container
-        run: |
-          docker run -d --name cups-config-container base-cups
-          sleep 2
-
-      # Step 3: Start cupsd, read printers.list, run lpadmin for each printer
-      - name: Configure Printers via lpadmin
-        run: |
-          # Start cupsd in the background
-          docker exec cups-config-container bash -c "cupsd & sleep 3"
-
-          # Read printers.list line by line. 
-          # Assume each line = "<PrinterName> <PrinterURI>"
-          # e.g. "StorePrinter1 ipp://192.168.50.101/ipp/print"
-          #      "StorePrinter2 socket://192.168.50.102"
-          while IFS= read -r line; do
-            # Skip empty lines
-            [ -z "$line" ] && continue
-
-            # Parse line into two variables: printerName and printerURI
-            printerName=$(echo "$line" | awk '{print $1}')
-            printerURI=$(echo "$line" | awk '{print $2}')
-
-            # Add the printer with a generic "everywhere" driver
-            echo "Configuring printer '$printerName' at '$printerURI'..."
-            docker exec cups-config-container lpadmin -p "$printerName" -E -v "$printerURI" -m everywhere
-            docker exec cups-config-container cupsenable "$printerName"
-            docker exec cups-config-container cupsaccept "$printerName"
-          done < printers.list
-
-          # Stop cupsd so it writes printers.conf to disk
-          docker exec cups-config-container killall cupsd || true
-
-      # Step 4: Copy /etc/cups/printers.conf & /etc/cups/ppd/ from the container
-      - name: Extract generated CUPS config files
-        run: |
-          mkdir -p cups-config/ppd
-          docker cp cups-config-container:/etc/cups/printers.conf cups-config/printers.conf || true
-          docker cp cups-config-container:/etc/cups/ppd cups-config/ppd || true
-
-      - name: List the extracted config
-        run: |
-          echo "Extracted files:"
-          ls -lR cups-config
-
-      # Step 5 (Option A): Upload as CI artifact
-      - name: Upload printers.conf artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: cups-config
-          path: cups-config
-
-      # Step 5 (Option B): Commit printers.conf to the repo (alternative)
-      # Uncomment if you want to commit these files back to the repo
-      # - name: Commit updated printers.conf to repo
-      #   run: |
-      #     git config user.email "[email protected]"
-      #     git config user.name "GitHub Actions"
-      #     cp -r cups-config/* .
-      #     git add printers.conf ppd/*.ppd
-      #     git commit -m "Update printers.conf and PPDs"
-      #     git push
-
-      # Step 6: Clean up container
-      - name: Clean up
-        run: |
-          docker rm -f cups-config-container
+# No default CMD, we will run `cupsd` manually in the workflow
+CMD ["/bin/bash"]
 
 
+======
 
+Your file printers.list might look like:
 
+perl
+Copy
+Edit
+StorePrinter1 ipp://192.168.50.101/ipp/print
+StorePrinter2 socket://192.168.50.102
 
-===================
-
-name: Build Final CUPS Image
-
-on:
-  workflow_run:
-    workflows: ["Generate CUPS printers.conf"]
-    types:
-      - completed
-
-jobs:
-  build-image:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-
-      # Step 1: Download the artifact from the first workflow
-      - name: Download CUPS config artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: cups-config
-          path: cups-config
-
-      # (Optional) Show the downloaded files
-      - name: List downloaded artifact
-        run: ls -lR cups-config
-
-      # Step 2: Build the final Docker image with pre-baked printers.conf
-      - name: Build final CUPS Docker image
-        run: |
-          # Dockerfile references local printers.conf + PPDs in cups-config/
-          docker build -t my-cups:latest -f Dockerfile.final .
-
-      # Step 3: (Optional) Push image to a registry
-      # For example, GitHub Container Registry:
-      - name: Log in to ghcr
-        if: always()
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Tag and Push
-        run: |
-          docker tag my-cups:latest ghcr.io/${{ github.repository }}/my-cups:latest
-          docker push ghcr.io/${{ github.repository }}/my-cups:latest
-
-
-==========================================\\\
+======
 
 # Dockerfile.final
+FROM ubuntu:22.04
 
-FROM alpine:3.17
-RUN apk add --no-cache cups
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Copy the known working config from your downloaded artifact
-# We'll assume the workflow placed them in "cups-config/printers.conf" & "cups-config/ppd/" 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cups \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the pre-generated config from the local folder (downloaded artifact)
 COPY cups-config/printers.conf /etc/cups/printers.conf
 COPY cups-config/ppd /etc/cups/ppd
 
 # Fix ownership if needed
 RUN chown root:lp /etc/cups/printers.conf /etc/cups/ppd/*
 
-# Expose IPP port
+# Expose IPP default port
 EXPOSE 631
 
 CMD ["cupsd", "-f"]
+
+=======
+
+name: Generate and Build CUPS Image
+
+on:
+  # Trigger on push to main or pull request (adjust as desired)
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  # You can also add workflow_dispatch for manual runs:
+  # workflow_dispatch:
+
+jobs:
+  generate-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Build base CUPS image
+        run: |
+          docker build -t base-cups -f Dockerfile.base .
+
+      - name: Start ephemeral container
+        run: |
+          docker run -d --name cups-config-container base-cups
+          sleep 2
+
+      - name: Generate printers.conf via lpadmin
+        run: |
+          # Start cupsd in background, wait a few seconds
+          docker exec cups-config-container bash -c "cupsd & sleep 3"
+
+          # Loop through each line in printers.list
+          while IFS= read -r line; do
+            # Skip empty lines
+            [ -z "$line" ] && continue
+            # Parse line into two variables: PRINTER_NAME and PRINTER_URI
+            PRINTER_NAME=$(echo "$line" | awk '{print $1}')
+            PRINTER_URI=$(echo "$line" | awk '{print $2}')
+
+            echo "Configuring printer '$PRINTER_NAME' at '$PRINTER_URI'..."
+            docker exec cups-config-container lpadmin -p "$PRINTER_NAME" -E -v "$PRINTER_URI" -m everywhere
+            docker exec cups-config-container cupsenable "$PRINTER_NAME"
+            docker exec cups-config-container cupsaccept "$PRINTER_NAME"
+          done < printers.list
+
+          # Stop cupsd so it flushes printers.conf
+          docker exec cups-config-container killall cupsd || true
+
+      - name: Extract generated config
+        run: |
+          mkdir -p cups-config/ppd
+          docker cp cups-config-container:/etc/cups/printers.conf cups-config/printers.conf || true
+          docker cp cups-config-container:/etc/cups/ppd cups-config/ppd || true
+
+      - name: Show extracted config
+        run: ls -lR cups-config
+
+      - name: Upload config artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: cups-config
+          path: cups-config
+
+      - name: Clean up container
+        run: docker rm -f cups-config-container
+
+  build-image:
+    runs-on: ubuntu-latest
+    needs: generate-config
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Download config artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: cups-config
+          path: cups-config
+
+      - name: Build final Docker image
+        run: |
+          docker build -t my-cups:latest -f Dockerfile.final .
+
+      # Optional: push the final image to GHCR, Docker Hub, etc.
+      - name: Log in to GitHub Container Registry
+        if: always()
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Tag & push final image
+        run: |
+          docker tag my-cups:latest ghcr.io/${{ github.repository }}/my-cups:latest
+          docker push ghcr.io/${{ github.repository }}/my-cups:latest
+
+=====
+
+# CUPS Configuration & Image Builder
+
+This repository provides an automated pipeline (via **GitHub Actions**) to:
+
+1. **Generate** a `printers.conf` file (plus any PPD files) for CUPS by reading a `printers.list` file and running `lpadmin` commands in an ephemeral Docker container.
+2. **Build** a final Docker image that bakes these printer configurations into CUPS.
+
+Everything is done in a **single** GitHub Actions workflow with two jobs. The first job generates `printers.conf`, and the second job uses that config to build the final image. The final Docker image can be pushed to a registry (e.g., GHCR).
+
+---
+
+## Repository Layout
+
+
+### 1. `Dockerfile.base`
+A minimal Dockerfile that installs CUPS (e.g., on Ubuntu) but does **not** configure any printers.  
+- Used for the **ephemeral container** where we run `lpadmin`.
+
+### 2. `printers.list`
+A simple text file that lists printers you want to configure, one per line:
+> ex: StorePrinter1 ipp://192.168.50.101/ipp/print StorePrinter2 socket://192.168.50.102
+
+Each line has a **printer name** and a **printer URI** separated by a space. The GitHub Actions workflow parses this file to run `lpadmin`.
+
+### 3. `generate-and-build.yml`
+A **single GitHub Actions** workflow that does:
+
+- **Job A** (`generate-config`)
+  1. Builds the base image (from `Dockerfile.base`).
+  2. Runs an ephemeral container named `cups-config-container`.
+  3. Starts `cupsd`, reads `printers.list`, and calls `lpadmin` for each printer.
+  4. Copies out `printers.conf` and `/etc/cups/ppd/` from the container.
+  5. Uploads them as an artifact named `cups-config`.
+- **Job B** (`build-image`)
+  1. Downloads the `cups-config` artifact.
+  2. Builds the **final** Docker image (from `Dockerfile.final`), copying in the newly generated `printers.conf` and PPDs.
+  3. Optionally pushes the final image to GitHub Container Registry (GHCR).
+
+### 4. `Dockerfile.final`
+The final Dockerfile that installs CUPS and then **copies** in the `printers.conf` + PPDs (downloaded artifact). This results in a Docker image that has the printers pre-configured.
+
+---
+
+## How the Workflow Operates
+
+1. **Trigger**: The workflow (`generate-and-build.yml`) triggers on `push` or `pull_request` to the `main` branch (configurable).
+2. **Job A** (`generate-config`) runs first:
+   - **Build** `base-cups` image from `Dockerfile.base`.
+   - **Run** ephemeral container, start `cupsd`, parse `printers.list` to configure each printer.
+   - **Stop** cupsd, **extract** `/etc/cups/printers.conf` + `/etc/cups/ppd/`.
+   - **Upload** these files as an artifact named `cups-config`.
+3. **Job B** (`build-image`) depends on job A (`needs: generate-config`):
+   - **Download** the `cups-config` artifact.
+   - **Build** final Docker image from `Dockerfile.final`, copying in the config from `cups-config/`.
+   - **Push** (optional) to a container registry.
+
+---
+
+## Running Locally (Optional)
+
+If you’d like to test the Dockerfiles locally before pushing:
+
+1. **Build** the base image manually:
+   ```bash
+   docker build -t base-cups -f Dockerfile.base .
+
 
 
