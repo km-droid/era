@@ -1,232 +1,90 @@
-RUN sed -i '/^<Location \/>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cups/cupsd.conf \
- && sed -i '/^<Location \/>/,/^<\/Location>/ s/Order allow,deny/Order deny,allow/g' /etc/cups/cupsd.conf \
- && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Require user @SYSTEM/Require valid-user/g' /etc/cups/cupsd.conf \
- && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Allow @LOCAL/Allow all/g' /etc/cups/cupsd.conf \
- && sed -i '/^<Location \/admin>/,/^<\/Location>/ s/Order allow,deny/Order deny,allow/g' /etc/cups/cupsd.conf
+package main
 
-.
-├── .github
-│   └── workflows
-│       └── generate-and-build.yml  # The GitHub Actions workflow
-├── Dockerfile.base
-├── Dockerfile.final
-├── printers.list
-└── README.md
+import (
+    "context"
+    "encoding/csv"
+    "fmt"
+    "log"
+    "os"
+    "strings"
 
+    "golang.org/x/oauth2/google"
+    dns "google.golang.org/api/dns/v1"
+)
 
-# Dockerfile.base
-FROM ubuntu:22.04
+func main() {
+    ctx := context.Background()
 
-ENV DEBIAN_FRONTEND=noninteractive
+    // 1. Obtain a default client which has credentials for accessing Google Cloud DNS
+    client, err := google.DefaultClient(ctx, dns.NdevClouddnsReadwriteScope)
+    if err != nil {
+        log.Fatalf("Failed to create client: %v", err)
+    }
 
-# Install CUPS
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cups \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    // 2. Create a DNS service
+    dnsService, err := dns.New(client)
+    if err != nil {
+        log.Fatalf("Failed to create DNS service: %v", err)
+    }
 
-# No default CMD, we will run `cupsd` manually in the workflow
-CMD ["/bin/bash"]
+    // Replace with your actual GCP Project ID
+    projectID := "YOUR_PROJECT_ID"
 
+    // 3. List all Managed Zones in the project
+    managedZones, err := dnsService.ManagedZones.List(projectID).Do()
+    if err != nil {
+        log.Fatalf("Failed to list managed zones: %v", err)
+    }
 
-======
+    // 4. Create or open a CSV file for writing
+    csvFile, err := os.Create("dns_records.csv")
+    if err != nil {
+        log.Fatalf("Failed to create CSV file: %v", err)
+    }
+    defer csvFile.Close()
 
-Your file printers.list might look like:
+    writer := csv.NewWriter(csvFile)
+    defer writer.Flush()
 
-perl
-Copy
-Edit
-StorePrinter1 ipp://192.168.50.101/ipp/print
-StorePrinter2 socket://192.168.50.102
+    // Write header row
+    if err := writer.Write([]string{
+        "Zone Name",
+        "DNS Name",
+        "Record Name",
+        "Record Type",
+        "TTL",
+        "Record Data",
+    }); err != nil {
+        log.Fatalf("Failed to write CSV header: %v", err)
+    }
 
-======
+    // 5. Iterate through each Managed Zone and list all DNS record sets
+    for _, zone := range managedZones.ManagedZones {
+        rrsets, err := dnsService.ResourceRecordSets.List(projectID, zone.Name).Do()
+        if err != nil {
+            log.Fatalf("Failed to list resource record sets for zone %s: %v", zone.Name, err)
+        }
 
-# Dockerfile.final
-FROM ubuntu:22.04
+        // 5b. Write info about each DNS record to the CSV
+        for _, rrset := range rrsets.Rrsets {
+            // Join multiple Rrdatas (e.g., multiple IPs for an A record) with a semicolon
+            recordData := strings.Join(rrset.Rrdatas, ";")
 
-ENV DEBIAN_FRONTEND=noninteractive
+            record := []string{
+                zone.Name,         // e.g. "example-zone"
+                zone.DnsName,      // e.g. "example.com."
+                rrset.Name,        // e.g. "sub.example.com."
+                rrset.Type,        // e.g. "A" or "CNAME"
+                fmt.Sprintf("%d", rrset.Ttl),
+                recordData,        // e.g. "1.2.3.4" or "anotherdomain.com."
+            }
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cups \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+            // Write a single row to the CSV
+            if err := writer.Write(record); err != nil {
+                log.Printf("Error writing record to CSV for zone %s: %v", zone.Name, err)
+            }
+        }
+    }
 
-# Copy the pre-generated config from the local folder (downloaded artifact)
-COPY cups-config/printers.conf /etc/cups/printers.conf
-COPY cups-config/ppd /etc/cups/ppd
-
-# Fix ownership if needed
-RUN chown root:lp /etc/cups/printers.conf /etc/cups/ppd/*
-
-# Expose IPP default port
-EXPOSE 631
-
-CMD ["cupsd", "-f"]
-
-=======
-
-name: Generate and Build CUPS Image
-
-on:
-  # Trigger on push to main or pull request (adjust as desired)
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  # You can also add workflow_dispatch for manual runs:
-  # workflow_dispatch:
-
-jobs:
-  generate-config:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-
-      - name: Build base CUPS image
-        run: |
-          docker build -t base-cups -f Dockerfile.base .
-
-      - name: Start ephemeral container
-        run: |
-          docker run -d --name cups-config-container base-cups
-          sleep 2
-
-      - name: Generate printers.conf via lpadmin
-        run: |
-          # Start cupsd in background, wait a few seconds
-          docker exec cups-config-container bash -c "cupsd & sleep 3"
-
-          # Loop through each line in printers.list
-          while IFS= read -r line; do
-            # Skip empty lines
-            [ -z "$line" ] && continue
-            # Parse line into two variables: PRINTER_NAME and PRINTER_URI
-            PRINTER_NAME=$(echo "$line" | awk '{print $1}')
-            PRINTER_URI=$(echo "$line" | awk '{print $2}')
-
-            echo "Configuring printer '$PRINTER_NAME' at '$PRINTER_URI'..."
-            docker exec cups-config-container lpadmin -p "$PRINTER_NAME" -E -v "$PRINTER_URI" -m everywhere
-            docker exec cups-config-container cupsenable "$PRINTER_NAME"
-            docker exec cups-config-container cupsaccept "$PRINTER_NAME"
-          done < printers.list
-
-          # Stop cupsd so it flushes printers.conf
-          docker exec cups-config-container killall cupsd || true
-
-      - name: Extract generated config
-        run: |
-          mkdir -p cups-config/ppd
-          docker cp cups-config-container:/etc/cups/printers.conf cups-config/printers.conf || true
-          docker cp cups-config-container:/etc/cups/ppd cups-config/ppd || true
-
-      - name: Show extracted config
-        run: ls -lR cups-config
-
-      - name: Upload config artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: cups-config
-          path: cups-config
-
-      - name: Clean up container
-        run: docker rm -f cups-config-container
-
-  build-image:
-    runs-on: ubuntu-latest
-    needs: generate-config
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-
-      - name: Download config artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: cups-config
-          path: cups-config
-
-      - name: Build final Docker image
-        run: |
-          docker build -t my-cups:latest -f Dockerfile.final .
-
-      # Optional: push the final image to GHCR, Docker Hub, etc.
-      - name: Log in to GitHub Container Registry
-        if: always()
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Tag & push final image
-        run: |
-          docker tag my-cups:latest ghcr.io/${{ github.repository }}/my-cups:latest
-          docker push ghcr.io/${{ github.repository }}/my-cups:latest
-
-=====
-
-# CUPS Configuration & Image Builder
-
-This repository provides an automated pipeline (via **GitHub Actions**) to:
-
-1. **Generate** a `printers.conf` file (plus any PPD files) for CUPS by reading a `printers.list` file and running `lpadmin` commands in an ephemeral Docker container.
-2. **Build** a final Docker image that bakes these printer configurations into CUPS.
-
-Everything is done in a **single** GitHub Actions workflow with two jobs. The first job generates `printers.conf`, and the second job uses that config to build the final image. The final Docker image can be pushed to a registry (e.g., GHCR).
-
----
-
-## Repository Layout
-
-
-### 1. `Dockerfile.base`
-A minimal Dockerfile that installs CUPS (e.g., on Ubuntu) but does **not** configure any printers.  
-- Used for the **ephemeral container** where we run `lpadmin`.
-
-### 2. `printers.list`
-A simple text file that lists printers you want to configure, one per line:
-> ex: StorePrinter1 ipp://192.168.50.101/ipp/print StorePrinter2 socket://192.168.50.102
-
-Each line has a **printer name** and a **printer URI** separated by a space. The GitHub Actions workflow parses this file to run `lpadmin`.
-
-### 3. `generate-and-build.yml`
-A **single GitHub Actions** workflow that does:
-
-- **Job A** (`generate-config`)
-  1. Builds the base image (from `Dockerfile.base`).
-  2. Runs an ephemeral container named `cups-config-container`.
-  3. Starts `cupsd`, reads `printers.list`, and calls `lpadmin` for each printer.
-  4. Copies out `printers.conf` and `/etc/cups/ppd/` from the container.
-  5. Uploads them as an artifact named `cups-config`.
-- **Job B** (`build-image`)
-  1. Downloads the `cups-config` artifact.
-  2. Builds the **final** Docker image (from `Dockerfile.final`), copying in the newly generated `printers.conf` and PPDs.
-  3. Optionally pushes the final image to GitHub Container Registry (GHCR).
-
-### 4. `Dockerfile.final`
-The final Dockerfile that installs CUPS and then **copies** in the `printers.conf` + PPDs (downloaded artifact). This results in a Docker image that has the printers pre-configured.
-
----
-
-## How the Workflow Operates
-
-1. **Trigger**: The workflow (`generate-and-build.yml`) triggers on `push` or `pull_request` to the `main` branch (configurable).
-2. **Job A** (`generate-config`) runs first:
-   - **Build** `base-cups` image from `Dockerfile.base`.
-   - **Run** ephemeral container, start `cupsd`, parse `printers.list` to configure each printer.
-   - **Stop** cupsd, **extract** `/etc/cups/printers.conf` + `/etc/cups/ppd/`.
-   - **Upload** these files as an artifact named `cups-config`.
-3. **Job B** (`build-image`) depends on job A (`needs: generate-config`):
-   - **Download** the `cups-config` artifact.
-   - **Build** final Docker image from `Dockerfile.final`, copying in the config from `cups-config/`.
-   - **Push** (optional) to a container registry.
-
----
-
-## Running Locally (Optional)
-
-If you’d like to test the Dockerfiles locally before pushing:
-
-1. **Build** the base image manually:
-   ```bash
-   docker build -t base-cups -f Dockerfile.base .
-
-
-
+    fmt.Println("DNS records have been written to dns_records.csv")
+}
