@@ -1,1 +1,57 @@
-mmm
+#!/usr/bin/env bash
+
+# Usage: ./geocode.sh addresses.txt
+
+INPUT_FILE="$1"
+
+# Make sure we have an input file
+if [ -z "$INPUT_FILE" ]; then
+  echo "Usage: $0 <filename>"
+  exit 1
+fi
+
+# Verify dependencies: curl, jq
+if ! command -v curl &>/dev/null; then
+  echo "Error: curl is not installed."
+  exit 1
+fi
+
+if ! command -v jq &>/dev/null; then
+  echo "Error: jq is not installed."
+  exit 1
+fi
+
+# Loop through each line (address) in the file
+while IFS= read -r address; do
+  # Skip empty lines
+  if [ -z "$address" ]; then
+    continue
+  fi
+
+  # URL-encode the address (replace spaces and special characters)
+  encoded_address=$(echo "$address" | jq -sRr @uri)
+
+  # Nominatim API endpoint
+  # 'format=jsonv2' returns an easily parseable JSON
+  # 'limit=1' restricts to the first result
+  # 'addressdetails=1' can provide more details (not mandatory)
+  API_URL="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=$encoded_address"
+
+  # Use curl to query the API and extract lat/lon using jq
+  result=$(curl -s "$API_URL")
+
+  # Parse JSON and extract latitude and longitude
+  lat=$(echo "$result" | jq -r '.[0].lat // empty')
+  lon=$(echo "$result" | jq -r '.[0].lon // empty')
+
+  # Check if we got a result
+  if [ -n "$lat" ] && [ -n "$lon" ]; then
+    echo "Address: $address"
+    echo "Latitude: $lat, Longitude: $lon"
+    echo ""
+  else
+    echo "Address: $address"
+    echo "Coordinates not found."
+    echo ""
+  fi
+done < "$INPUT_FILE"
