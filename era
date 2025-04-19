@@ -60,50 +60,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case selectProject:
 		var cmd tea.Cmd
 		m.projectList, cmd = m.projectList.Update(msg)
-		if i, ok := m.projectList.SelectedItem().(item); ok && msg.String() == "enter" {
-			m.selectedProj = string(i)
-			m.state = selectService
+		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
+			if i, ok := m.projectList.SelectedItem().(item); ok {
+				m.selectedProj = string(i)
+				m.state = selectService
 
-			services, err := cloudrun.ListCloudRunServices(m.selectedProj)
-			if err != nil {
-				panic(err)
+				services, err := cloudrun.ListCloudRunServices(m.selectedProj)
+				if err != nil {
+					panic(err)
+				}
+				var items []list.Item
+				for _, s := range services {
+					items = append(items, item(s))
+				}
+				m.serviceList = list.New(items, list.NewDefaultDelegate(), 50, 20)
+				m.serviceList.Title = "Select Cloud Run Service"
 			}
-			var items []list.Item
-			for _, s := range services {
-				items = append(items, item(s))
-			}
-			m.serviceList = list.New(items, list.NewDefaultDelegate(), 50, 20)
-			m.serviceList.Title = "Select Cloud Run Service"
 		}
 		return m, cmd
 
 	case selectService:
 		var cmd tea.Cmd
 		m.serviceList, cmd = m.serviceList.Update(msg)
-		if i, ok := m.serviceList.SelectedItem().(item); ok && msg.String() == "enter" {
-			m.selectedSvc = string(i)
-			m.state = selectRevision
+		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
+			if i, ok := m.serviceList.SelectedItem().(item); ok {
+				m.selectedSvc = string(i)
+				m.state = selectRevision
 
-			revisions, err := cloudrun.ListRevisionsWithTraffic(m.selectedProj, m.selectedSvc)
-			if err != nil {
-				panic(err)
+				revisions, err := cloudrun.ListRevisionsWithTraffic(m.selectedProj, m.selectedSvc)
+				if err != nil {
+					panic(err)
+				}
+				var items []list.Item
+				for _, r := range revisions {
+					items = append(items, item(r))
+				}
+				m.revisionList = list.New(items, list.NewDefaultDelegate(), 50, 20)
+				m.revisionList.Title = "Select Revision"
 			}
-			var items []list.Item
-			for _, r := range revisions {
-				items = append(items, item(r))
-			}
-			m.revisionList = list.New(items, list.NewDefaultDelegate(), 50, 20)
-			m.revisionList.Title = "Select Revision"
 		}
 		return m, cmd
 
 	case selectRevision:
 		var cmd tea.Cmd
 		m.revisionList, cmd = m.revisionList.Update(msg)
-		if i, ok := m.revisionList.SelectedItem().(item); ok && msg.String() == "enter" {
-			m.selectedRev = string(i)
-			m.state = selectChaos
-			m.chaosMenu = newMenu("Choose chaos action", []string{"Bring down service", "Inject fault"})
+		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
+			if i, ok := m.revisionList.SelectedItem().(item); ok {
+				m.selectedRev = string(i)
+				m.state = selectChaos
+				m.chaosMenu = newMenu("Choose chaos action", []string{"Bring down service", "Inject fault"})
+			}
 		}
 		return m, cmd
 
