@@ -1,45 +1,12 @@
-chaoscli/
-├── main.go               # CLI entry point
-├── ui/
-│   └── tea.go            # Bubbletea logic & user interaction
-├── cloudrun/
-│   ├── gcs.go            # Load projects from GCS
-│   └── services.go       # List services, revisions
-├── actions/
-│   └── chaos.go          # Simulate chaos actions (currently just log)
-└── go.mod
-
-main.go
-package main
-
-import (
-	"log"
-
-	"chaoscli/ui"
-
-	tea "github.com/charmbracelet/bubbletea"
-)
-
-func main() {
-	p := tea.NewProgram(ui.InitialModel())
-	if err := p.Start(); err != nil {
-		log.Fatal(err)
-	}
-}
-
-
-=====
-tea.go
-
 package ui
 
 import (
 	"chaoscli/actions"
 	"chaoscli/cloudrun"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/selector"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -66,8 +33,8 @@ type model struct {
 	selectedProj string
 	selectedSvc  string
 	selectedRev  string
-	chaosSel     selector.Model
-	faultSel     selector.Model
+	chaosMenu    menuModel
+	faultMenu    menuModel
 }
 
 func InitialModel() model {
@@ -90,7 +57,6 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.state {
-
 	case selectProject:
 		var cmd tea.Cmd
 		m.projectList, cmd = m.projectList.Update(msg)
@@ -137,30 +103,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if i, ok := m.revisionList.SelectedItem().(item); ok && msg.String() == "enter" {
 			m.selectedRev = string(i)
 			m.state = selectChaos
-			m.chaosSel = selector.New([]string{"Bring down service", "Inject fault"}, selector.WithCursor(">"))
+			m.chaosMenu = newMenu("Choose chaos action", []string{"Bring down service", "Inject fault"})
 		}
 		return m, cmd
 
 	case selectChaos:
 		var cmd tea.Cmd
-		m.chaosSel, cmd = m.chaosSel.Update(msg)
-		if m.chaosSel.Confirmed() {
-			if m.chaosSel.SelectedIndex() == 0 {
+		m.chaosMenu, cmd = m.chaosMenu.Update(msg)
+		if m.chaosMenu.Confirmed() {
+			if m.chaosMenu.SelectedIndex() == 0 {
 				actions.LogChaosAction(m.selectedProj, m.selectedSvc, m.selectedRev, "Bring down service")
 				m.state = done
 			} else {
+				m.faultMenu = newMenu("Select Fault Type", []string{"Add Delay", "Return 5xx", "Return 4xx"})
 				m.state = selectFault
-				m.faultSel = selector.New([]string{"Add Delay", "Return 5xx", "Return 4xx"}, selector.WithCursor(">"))
 			}
 		}
 		return m, cmd
 
 	case selectFault:
 		var cmd tea.Cmd
-		m.faultSel, cmd = m.faultSel.Update(msg)
-		if m.faultSel.Confirmed() {
-			action := m.faultSel.Choices()[m.faultSel.SelectedIndex()]
-			actions.LogChaosAction(m.selectedProj, m.selectedSvc, m.selectedRev, action)
+		m.faultMenu, cmd = m.faultMenu.Update(msg)
+		if m.faultMenu.Confirmed() {
+			actions.LogChaosAction(m.selectedProj, m.selectedSvc, m.selectedRev, m.faultMenu.Selected())
 			m.state = done
 		}
 		return m, cmd
@@ -180,125 +145,62 @@ func (m model) View() string {
 	case selectRevision:
 		return m.revisionList.View()
 	case selectChaos:
-		return "\nChoose chaos action:\n\n" + m.chaosSel.View()
+		return m.chaosMenu.View()
 	case selectFault:
-		return "\nSelect fault injection type:\n\n" + m.faultSel.View()
+		return m.faultMenu.View()
 	case done:
-		return "✅ Chaos action logged. Exiting.\n"
+		return "\n✅ Chaos action logged. Exiting.\n"
 	}
 	return "Loading..."
 }
 
+// Menu selector
 
-=====
-gcs.go
-
-package cloudrun
-
-import (
-	"bufio"
-	"context"
-	"strings"
-
-	"cloud.google.com/go/storage"
-)
-
-const (
-	bucketName = "your-bucket-name"
-	objectName = "projects.txt"
-)
-
-func LoadProjectsFromGCS() ([]string, error) {
-	ctx := context.Background()
-	client, err := storage.NewClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-
-	rc, err := client.Bucket(bucketName).Object(objectName).NewReader(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-
-	var projects []string
-	scanner := bufio.NewScanner(rc)
-	for scanner.Scan() {
-		projects = append(projects, strings.TrimSpace(scanner.Text()))
-	}
-	return projects, scanner.Err()
-}
-=======
-service.go
-package cloudrun
-
-import (
-	"context"
-	"fmt"
-	"strings"
-
-	run "cloud.google.com/go/run/apiv2"
-	runpb "cloud.google.com/go/run/apiv2/runpb"
-)
-
-func ListCloudRunServices(project string) ([]string, error) {
-	ctx := context.Background()
-	client, err := run.NewServicesClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-
-	var services []string
-	req := &runpb.ListServicesRequest{
-		Parent: fmt.Sprintf("projects/%s/locations/-", project),
-	}
-	it := client.ListServices(ctx, req)
-	for {
-		svc, err := it.Next()
-		if err != nil {
-			break
-		}
-		services = append(services, svc.GetName())
-	}
-	return services, nil
+type menuModel struct {
+	title   string
+	options []string
+	cursor  int
+	choice  int
+	confirm bool
 }
 
-func ListRevisionsWithTraffic(project, fullServiceName string) ([]string, error) {
-	ctx := context.Background()
-	client, err := run.NewServicesClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
+func newMenu(title string, options []string) menuModel {
+	return menuModel{title: title, options: options, cursor: 0, confirm: false}
+}
 
-	service, err := client.GetService(ctx, &runpb.GetServiceRequest{Name: fullServiceName})
-	if err != nil {
-		return nil, err
-	}
-
-	var revs []string
-	for _, t := range service.Traffic {
-		if t.GetPercent() > 0 {
-			revs = append(revs, t.GetRevision())
+func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.options)-1 {
+				m.cursor++
+			}
+		case "enter":
+			m.choice = m.cursor
+			m.confirm = true
 		}
 	}
-	return revs, nil
+	return m, nil
 }
 
-=====
-chaos.go
-package actions
-
-import "fmt"
-
-func LogChaosAction(project, service, revision, action string) {
-	fmt.Println("\n[⚠️ Chaos Action Selected ⚠️]")
-	fmt.Printf("Project:  %s\n", project)
-	fmt.Printf("Service:  %s\n", service)
-	fmt.Printf("Revision: %s\n", revision)
-	fmt.Printf("Action:   %s\n", action)
+func (m menuModel) View() string {
+	var b strings.Builder
+	b.WriteString(m.title + "\n\n")
+	for i, opt := range m.options {
+		cursor := "  "
+		if m.cursor == i {
+			cursor = "➜ "
+		}
+		b.WriteString(fmt.Sprintf("%s%s\n", cursor, opt))
+	}
+	return b.String()
 }
 
-======
+func (m menuModel) Confirmed() bool    { return m.confirm }
+func (m menuModel) Selected() string   { return m.options[m.choice] }
+func (m menuModel) SelectedIndex() int { return m.choice }
