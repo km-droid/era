@@ -1,1 +1,304 @@
+chaoscli/
+├── main.go               # CLI entry point
+├── ui/
+│   └── tea.go            # Bubbletea logic & user interaction
+├── cloudrun/
+│   ├── gcs.go            # Load projects from GCS
+│   └── services.go       # List services, revisions
+├── actions/
+│   └── chaos.go          # Simulate chaos actions (currently just log)
+└── go.mod
 
+main.go
+package main
+
+import (
+	"log"
+
+	"chaoscli/ui"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func main() {
+	p := tea.NewProgram(ui.InitialModel())
+	if err := p.Start(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+
+=====
+tea.go
+
+package ui
+
+import (
+	"chaoscli/actions"
+	"chaoscli/cloudrun"
+	"fmt"
+
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/selector"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+type state int
+
+const (
+	selectProject state = iota
+	selectService
+	selectRevision
+	selectChaos
+	selectFault
+	done
+)
+
+type item string
+
+func (i item) FilterValue() string { return string(i) }
+
+type model struct {
+	state        state
+	projectList  list.Model
+	serviceList  list.Model
+	revisionList list.Model
+	selectedProj string
+	selectedSvc  string
+	selectedRev  string
+	chaosSel     selector.Model
+	faultSel     selector.Model
+}
+
+func InitialModel() model {
+	projects, err := cloudrun.LoadProjectsFromGCS()
+	if err != nil {
+		panic(err)
+	}
+	var items []list.Item
+	for _, p := range projects {
+		items = append(items, item(p))
+	}
+	l := list.New(items, list.NewDefaultDelegate(), 50, 20)
+	l.Title = "Select a GCP Project"
+	return model{state: selectProject, projectList: l}
+}
+
+func (m model) Init() tea.Cmd {
+	return nil
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch m.state {
+
+	case selectProject:
+		var cmd tea.Cmd
+		m.projectList, cmd = m.projectList.Update(msg)
+		if i, ok := m.projectList.SelectedItem().(item); ok && msg.String() == "enter" {
+			m.selectedProj = string(i)
+			m.state = selectService
+
+			services, err := cloudrun.ListCloudRunServices(m.selectedProj)
+			if err != nil {
+				panic(err)
+			}
+			var items []list.Item
+			for _, s := range services {
+				items = append(items, item(s))
+			}
+			m.serviceList = list.New(items, list.NewDefaultDelegate(), 50, 20)
+			m.serviceList.Title = "Select Cloud Run Service"
+		}
+		return m, cmd
+
+	case selectService:
+		var cmd tea.Cmd
+		m.serviceList, cmd = m.serviceList.Update(msg)
+		if i, ok := m.serviceList.SelectedItem().(item); ok && msg.String() == "enter" {
+			m.selectedSvc = string(i)
+			m.state = selectRevision
+
+			revisions, err := cloudrun.ListRevisionsWithTraffic(m.selectedProj, m.selectedSvc)
+			if err != nil {
+				panic(err)
+			}
+			var items []list.Item
+			for _, r := range revisions {
+				items = append(items, item(r))
+			}
+			m.revisionList = list.New(items, list.NewDefaultDelegate(), 50, 20)
+			m.revisionList.Title = "Select Revision"
+		}
+		return m, cmd
+
+	case selectRevision:
+		var cmd tea.Cmd
+		m.revisionList, cmd = m.revisionList.Update(msg)
+		if i, ok := m.revisionList.SelectedItem().(item); ok && msg.String() == "enter" {
+			m.selectedRev = string(i)
+			m.state = selectChaos
+			m.chaosSel = selector.New([]string{"Bring down service", "Inject fault"}, selector.WithCursor(">"))
+		}
+		return m, cmd
+
+	case selectChaos:
+		var cmd tea.Cmd
+		m.chaosSel, cmd = m.chaosSel.Update(msg)
+		if m.chaosSel.Confirmed() {
+			if m.chaosSel.SelectedIndex() == 0 {
+				actions.LogChaosAction(m.selectedProj, m.selectedSvc, m.selectedRev, "Bring down service")
+				m.state = done
+			} else {
+				m.state = selectFault
+				m.faultSel = selector.New([]string{"Add Delay", "Return 5xx", "Return 4xx"}, selector.WithCursor(">"))
+			}
+		}
+		return m, cmd
+
+	case selectFault:
+		var cmd tea.Cmd
+		m.faultSel, cmd = m.faultSel.Update(msg)
+		if m.faultSel.Confirmed() {
+			action := m.faultSel.Choices()[m.faultSel.SelectedIndex()]
+			actions.LogChaosAction(m.selectedProj, m.selectedSvc, m.selectedRev, action)
+			m.state = done
+		}
+		return m, cmd
+
+	case done:
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m model) View() string {
+	switch m.state {
+	case selectProject:
+		return m.projectList.View()
+	case selectService:
+		return m.serviceList.View()
+	case selectRevision:
+		return m.revisionList.View()
+	case selectChaos:
+		return "\nChoose chaos action:\n\n" + m.chaosSel.View()
+	case selectFault:
+		return "\nSelect fault injection type:\n\n" + m.faultSel.View()
+	case done:
+		return "✅ Chaos action logged. Exiting.\n"
+	}
+	return "Loading..."
+}
+
+
+=====
+gcs.go
+
+package cloudrun
+
+import (
+	"bufio"
+	"context"
+	"strings"
+
+	"cloud.google.com/go/storage"
+)
+
+const (
+	bucketName = "your-bucket-name"
+	objectName = "projects.txt"
+)
+
+func LoadProjectsFromGCS() ([]string, error) {
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	rc, err := client.Bucket(bucketName).Object(objectName).NewReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+
+	var projects []string
+	scanner := bufio.NewScanner(rc)
+	for scanner.Scan() {
+		projects = append(projects, strings.TrimSpace(scanner.Text()))
+	}
+	return projects, scanner.Err()
+}
+=======
+service.go
+package cloudrun
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	run "cloud.google.com/go/run/apiv2"
+	runpb "cloud.google.com/go/run/apiv2/runpb"
+)
+
+func ListCloudRunServices(project string) ([]string, error) {
+	ctx := context.Background()
+	client, err := run.NewServicesClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	var services []string
+	req := &runpb.ListServicesRequest{
+		Parent: fmt.Sprintf("projects/%s/locations/-", project),
+	}
+	it := client.ListServices(ctx, req)
+	for {
+		svc, err := it.Next()
+		if err != nil {
+			break
+		}
+		services = append(services, svc.GetName())
+	}
+	return services, nil
+}
+
+func ListRevisionsWithTraffic(project, fullServiceName string) ([]string, error) {
+	ctx := context.Background()
+	client, err := run.NewServicesClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	service, err := client.GetService(ctx, &runpb.GetServiceRequest{Name: fullServiceName})
+	if err != nil {
+		return nil, err
+	}
+
+	var revs []string
+	for _, t := range service.Traffic {
+		if t.GetPercent() > 0 {
+			revs = append(revs, t.GetRevision())
+		}
+	}
+	return revs, nil
+}
+
+=====
+chaos.go
+package actions
+
+import "fmt"
+
+func LogChaosAction(project, service, revision, action string) {
+	fmt.Println("\n[⚠️ Chaos Action Selected ⚠️]")
+	fmt.Printf("Project:  %s\n", project)
+	fmt.Printf("Service:  %s\n", service)
+	fmt.Printf("Revision: %s\n", revision)
+	fmt.Printf("Action:   %s\n", action)
+}
+
+======
