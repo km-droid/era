@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type state int
@@ -21,9 +22,20 @@ const (
 	done
 )
 
-type item string
+var (
+	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
+	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true)
+	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+)
 
-func (i item) FilterValue() string { return string(i) }
+type item struct {
+	title, desc string
+}
+
+func (i item) Title() string       { return i.title }
+func (i item) Description() string { return i.desc }
+func (i item) FilterValue() string { return i.title }
 
 type model struct {
 	state        state
@@ -44,10 +56,13 @@ func InitialModel() model {
 	}
 	var items []list.Item
 	for _, p := range projects {
-		items = append(items, item(p))
+		items = append(items, item{title: p, desc: "Google Cloud Project"})
 	}
-	l := list.New(items, list.NewDefaultDelegate(), 50, 20)
-	l.Title = "Select a GCP Project"
+	l := list.New(items, list.NewDefaultDelegate(), 50, 10)
+	l.Title = titleStyle.Render("Select a GCP Project")
+	l.SetShowFilter(true)
+	l.SetFilteringEnabled(true)
+	l.Paginator.PerPage = 5
 	return model{state: selectProject, projectList: l}
 }
 
@@ -60,21 +75,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case selectProject:
 		var cmd tea.Cmd
 		m.projectList, cmd = m.projectList.Update(msg)
-		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
-			if i, ok := m.projectList.SelectedItem().(item); ok {
-				m.selectedProj = string(i)
-				m.state = selectService
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "enter":
+				if i, ok := m.projectList.SelectedItem().(item); ok {
+					m.selectedProj = i.title
+					m.state = selectService
 
-				services, err := cloudrun.ListCloudRunServices(m.selectedProj)
-				if err != nil {
-					panic(err)
+					services, err := cloudrun.ListCloudRunServices(m.selectedProj)
+					if err != nil {
+						panic(err)
+					}
+					var items []list.Item
+					for _, s := range services {
+						items = append(items, item{title: s, desc: "Cloud Run Service"})
+					}
+					m.serviceList = list.New(items, list.NewDefaultDelegate(), 50, 10)
+					m.serviceList.Title = titleStyle.Render("Select Cloud Run Service")
+					m.serviceList.SetShowFilter(true)
+					m.serviceList.SetFilteringEnabled(true)
+					m.serviceList.Paginator.PerPage = 5
 				}
-				var items []list.Item
-				for _, s := range services {
-					items = append(items, item(s))
-				}
-				m.serviceList = list.New(items, list.NewDefaultDelegate(), 50, 20)
-				m.serviceList.Title = "Select Cloud Run Service"
+			case "b":
+				return m, tea.Quit
 			}
 		}
 		return m, cmd
@@ -82,21 +105,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case selectService:
 		var cmd tea.Cmd
 		m.serviceList, cmd = m.serviceList.Update(msg)
-		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
-			if i, ok := m.serviceList.SelectedItem().(item); ok {
-				m.selectedSvc = string(i)
-				m.state = selectRevision
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "enter":
+				if i, ok := m.serviceList.SelectedItem().(item); ok {
+					m.selectedSvc = i.title
+					m.state = selectRevision
 
-				revisions, err := cloudrun.ListRevisionsWithTraffic(m.selectedProj, m.selectedSvc)
-				if err != nil {
-					panic(err)
+					revisions, err := cloudrun.ListRevisionsWithTraffic(m.selectedProj, m.selectedSvc)
+					if err != nil {
+						panic(err)
+					}
+					var items []list.Item
+					for _, r := range revisions {
+						items = append(items, item{title: r, desc: "Revision with Traffic"})
+					}
+					m.revisionList = list.New(items, list.NewDefaultDelegate(), 50, 10)
+					m.revisionList.Title = titleStyle.Render("Select Revision")
+					m.revisionList.SetShowFilter(true)
+					m.revisionList.SetFilteringEnabled(true)
+					m.revisionList.Paginator.PerPage = 5
 				}
-				var items []list.Item
-				for _, r := range revisions {
-					items = append(items, item(r))
-				}
-				m.revisionList = list.New(items, list.NewDefaultDelegate(), 50, 20)
-				m.revisionList.Title = "Select Revision"
+			case "b":
+				m.state = selectProject
 			}
 		}
 		return m, cmd
@@ -104,11 +135,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case selectRevision:
 		var cmd tea.Cmd
 		m.revisionList, cmd = m.revisionList.Update(msg)
-		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
-			if i, ok := m.revisionList.SelectedItem().(item); ok {
-				m.selectedRev = string(i)
-				m.state = selectChaos
-				m.chaosMenu = newMenu("Choose chaos action", []string{"Bring down service", "Inject fault"})
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "enter":
+				if i, ok := m.revisionList.SelectedItem().(item); ok {
+					m.selectedRev = i.title
+					m.state = selectChaos
+					m.chaosMenu = newMenu("Choose chaos action", []string{"Bring down service", "Inject fault"})
+				}
+			case "b":
+				m.state = selectService
 			}
 		}
 		return m, cmd
@@ -145,11 +181,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	switch m.state {
 	case selectProject:
-		return m.projectList.View()
+		return m.projectList.View() + "\n" + helpStyle.Render("(press 'b' to quit)")
 	case selectService:
-		return m.serviceList.View()
+		return m.serviceList.View() + "\n" + helpStyle.Render("(press 'b' to go back)")
 	case selectRevision:
-		return m.revisionList.View()
+		return m.revisionList.View() + "\n" + helpStyle.Render("(press 'b' to go back)")
 	case selectChaos:
 		return m.chaosMenu.View()
 	case selectFault:
@@ -189,6 +225,8 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 		case "enter":
 			m.choice = m.cursor
 			m.confirm = true
+		case "b":
+			m.confirm = false
 		}
 	}
 	return m, nil
@@ -196,15 +234,19 @@ func (m menuModel) Update(msg tea.Msg) (menuModel, tea.Cmd) {
 
 func (m menuModel) View() string {
 	var b strings.Builder
-	b.WriteString(m.title + "\n\n")
+	b.WriteString(titleStyle.Render(m.title) + "\n\n")
 	for i, opt := range m.options {
 		cursor := "  "
 		if m.cursor == i {
-			cursor = "➜ "
+			cursor = cursorStyle.Render("➜ ")
 		}
-		b.WriteString(fmt.Sprintf("%s%s\n", cursor, opt))
+		if m.cursor == i {
+			b.WriteString(fmt.Sprintf("%s%s\n", cursor, selectedStyle.Render(opt)))
+		} else {
+			b.WriteString(fmt.Sprintf("%s%s\n", cursor, opt))
+		}
 	}
-	return b.String()
+	return b.String() + helpStyle.Render("\n(press 'b' to go back)")
 }
 
 func (m menuModel) Confirmed() bool    { return m.confirm }
