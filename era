@@ -1,1 +1,274 @@
 
+
+package main
+
+import (
+    "bytes"
+    "cloud.google.com/go/storage"
+    "context"
+    "encoding/csv"
+    "encoding/json"
+    "flag"
+    "fmt"
+    "io"
+    "io/ioutil"
+    "net/http"
+    "os"
+    "sort"
+    "strings"
+    "sync"
+
+    "golang.org/x/oauth2"
+    "golang.org/x/oauth2/google"
+    "google.golang.org/api/iterator"
+)
+
+const (
+    apiBase     = "https://gdchardwaremanagement.googleapis.com/v1alpha"
+    projectID   = "your-project-id"
+    region      = "us-east1"
+    gcsBucket   = "your-gcs-bucket"
+    ordersCSV   = "orders.csv"
+    statePrefix = "state/"
+)
+
+var (
+    zoneNetworkConfig = map[string]interface{}{
+        "defaultGateway": true,
+        "network":        "default",
+    }
+
+    hardwareDefaults = map[string]interface{}{
+        "powerRequirements": "120V",
+        "weight":            "20kg",
+        "dimensions": map[string]interface{}{
+            "width":  480,
+            "height": 88,
+            "depth":  500,
+        },
+    }
+)
+
+type OrderInfo struct {
+    OrderID          string
+    SiteID           string
+    SiteDisplay      string
+    SiteDesc         string
+    SiteAddress      string
+    SiteRep          string
+    SiteEmail        string
+    ZoneID           string
+    ZoneDisplay      string
+    HardwareID       string
+    SKU              string
+    OrderDisplay     string
+    CompanyName      string
+    CompanyEmail     string
+    CompanyPhone     string
+    ContactFirst     string
+    ContactLast      string
+    ContactEmail     string
+    ContactPhone     string
+    DeliveryDate     string
+    RackLocation     string
+    RackType         string
+}
+
+type StepState struct {
+    SiteCreated     bool `json:"site_created"`
+    ZoneCreated     bool `json:"zone_created"`
+    HardwareCreated bool `json:"hardware_created"`
+    OrderCreated    bool `json:"order_created"`
+}
+
+func readOrdersCSVFromGCS(ctx context.Context, gcsClient *storage.Client) ([]OrderInfo, error) {
+    rc, err := gcsClient.Bucket(gcsBucket).Object(ordersCSV).NewReader(ctx)
+    if err != nil {
+        return nil, err
+    }
+    defer rc.Close()
+
+    reader := csv.NewReader(rc)
+    reader.TrimLeadingSpace = true
+    records, err := reader.ReadAll()
+    if err != nil {
+        return nil, err
+    }
+
+    var orders []OrderInfo
+    for _, rec := range records[1:] {
+        orders = append(orders, OrderInfo{
+            OrderID:       rec[0],
+            SiteID:        rec[1],
+            SiteDisplay:   rec[2],
+            SiteDesc:      rec[3],
+            SiteAddress:   rec[4],
+            SiteRep:       rec[5],
+            SiteEmail:     rec[6],
+            ZoneID:        rec[7],
+            ZoneDisplay:   rec[8],
+            HardwareID:    rec[9],
+            SKU:           rec[10],
+            OrderDisplay:  rec[11],
+            CompanyName:   rec[12],
+            CompanyEmail:  rec[13],
+            CompanyPhone:  rec[14],
+            ContactFirst:  rec[15],
+            ContactLast:   rec[16],
+            ContactEmail:  rec[17],
+            ContactPhone:  rec[18],
+            DeliveryDate:  rec[19],
+            RackLocation:  rec[20],
+            RackType:      rec[21],
+        })
+    }
+    return orders, nil
+}
+
+func getStateFile(ctx context.Context, client *storage.Client, orderID string) StepState {
+    rc, err := client.Bucket(gcsBucket).Object(statePrefix + orderID + "_state.json").NewReader(ctx)
+    if err != nil {
+        return StepState{}
+    }
+    defer rc.Close()
+    data, _ := ioutil.ReadAll(rc)
+    var state StepState
+    json.Unmarshal(data, &state)
+    return state
+}
+
+func putStateFile(ctx context.Context, client *storage.Client, orderID string, state StepState) {
+    data, _ := json.MarshalIndent(state, "", "  ")
+    wc := client.Bucket(gcsBucket).Object(statePrefix + orderID + "_state.json").NewWriter(ctx)
+    defer wc.Close()
+    wc.Write(data)
+}
+
+func processOrder(order OrderInfo, client *http.Client, gcsClient *storage.Client, ctx context.Context) bool {
+    fmt.Printf("\n📦 Processing Order: %s\n", order.OrderID)
+    state := getStateFile(ctx, gcsClient, order.OrderID)
+
+    if !state.SiteCreated {
+        fmt.Println("🔧 Creating Site...")
+        if createSite(order, client) {
+            state.SiteCreated = true
+            putStateFile(ctx, gcsClient, order.OrderID, state)
+            fmt.Println("✅ Site created")
+        } else { return false }
+    }
+
+    if !state.ZoneCreated {
+        fmt.Println("🔧 Creating Zone...")
+        if createZone(order, client) {
+            state.ZoneCreated = true
+            putStateFile(ctx, gcsClient, order.OrderID, state)
+            fmt.Println("✅ Zone created")
+        } else { return false }
+    }
+
+    if !state.HardwareCreated {
+        fmt.Println("🔧 Creating Hardware...")
+        if createHardware(order, client) {
+            state.HardwareCreated = true
+            putStateFile(ctx, gcsClient, order.OrderID, state)
+            fmt.Println("✅ Hardware created")
+        } else { return false }
+    }
+
+    if !state.OrderCreated {
+        fmt.Println("📝 Submitting Order...")
+        if createOrder(order, client) {
+            state.OrderCreated = true
+            putStateFile(ctx, gcsClient, order.OrderID, state)
+            fmt.Println("✅ Order submitted")
+        } else { return false }
+    }
+
+    fmt.Printf("🎉 Order %s completed successfully!\n", order.OrderID)
+    return true
+}
+
+func createSite(order OrderInfo, client *http.Client) bool {
+    url := fmt.Sprintf("%s/projects/%s/locations/%s/sites?siteId=%s", apiBase, projectID, region, order.SiteID)
+    payload := map[string]interface{}{
+        "displayName": order.SiteDisplay,
+        "description": order.SiteDesc,
+        "contact": map[string]string{
+            "givenName":  order.SiteRep,
+            "familyName": "",
+            "email":      order.SiteEmail,
+            "phone":      "+1-000-000-0000",
+        },
+        "address": map[string]interface{}{
+            "regionCode":         "US",
+            "postalCode":         "10001",
+            "administrativeArea": "NY",
+            "locality":           "New York",
+            "addressLines":       []string{order.SiteAddress},
+        },
+    }
+    return doPost(client, url, payload)
+}
+
+func createZone(order OrderInfo, client *http.Client) bool {
+    url := fmt.Sprintf("%s/projects/%s/locations/%s/zones?zoneId=%s", apiBase, projectID, region, order.ZoneID)
+    payload := map[string]interface{}{
+        "displayName":   order.ZoneDisplay,
+        "site":          fmt.Sprintf("projects/%s/locations/%s/sites/%s", projectID, region, order.SiteID),
+        "networkConfig": zoneNetworkConfig,
+    }
+    return doPost(client, url, payload)
+}
+
+func createHardware(order OrderInfo, client *http.Client) bool {
+    url := fmt.Sprintf("%s/projects/%s/locations/%s/hardware?hardwareId=%s", apiBase, projectID, region, order.HardwareID)
+    payload := map[string]interface{}{
+        "displayName": order.HardwareID,
+        "sku":         order.SKU,
+        "zone":        fmt.Sprintf("projects/%s/locations/%s/zones/%s", projectID, region, order.ZoneID),
+        "installationInfo": map[string]interface{}{
+            "rack": map[string]interface{}{
+                "location": order.RackLocation,
+                "rackType": order.RackType,
+            },
+            "dimensions":        hardwareDefaults["dimensions"],
+            "weight":            hardwareDefaults["weight"],
+            "powerRequirements": hardwareDefaults["powerRequirements"],
+        },
+    }
+    return doPost(client, url, payload)
+}
+
+func createOrder(order OrderInfo, client *http.Client) bool {
+    url := fmt.Sprintf("%s/projects/%s/locations/%s/orders?orderId=%s", apiBase, projectID, region, order.OrderID)
+    payload := map[string]interface{}{
+        "displayName": order.OrderDisplay,
+        "site":        fmt.Sprintf("projects/%s/locations/%s/sites/%s", projectID, region, order.SiteID),
+        "zone":        fmt.Sprintf("projects/%s/locations/%s/zones/%s", projectID, region, order.ZoneID),
+        "contact": map[string]string{
+            "givenName":  order.ContactFirst,
+            "familyName": order.ContactLast,
+            "email":      order.ContactEmail,
+            "phone":      order.ContactPhone,
+        },
+    }
+    return doPost(client, url, payload)
+}
+
+func doPost(client *http.Client, url string, payload map[string]interface{}) bool {
+    data, _ := json.Marshal(payload)
+    req, _ := http.NewRequest("POST", url, bytes.NewBuffer(data))
+    req.Header.Set("Content-Type", "application/json")
+    resp, err := client.Do(req)
+    if err != nil {
+        fmt.Printf("❌ Request error: %v\n", err)
+        return false
+    }
+    defer resp.Body.Close()
+    body, _ := ioutil.ReadAll(resp.Body)
+    if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+        return true
+    }
+    fmt.Printf("❌ API error: %s\n", string(body))
+    return false
+}
