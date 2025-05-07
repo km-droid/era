@@ -1,1 +1,58 @@
-
+{
+        "displayName": order.HardwareID,
+        "sku":         order.Hardware.SKU,
+        "zone":        fmt.Sprintf("projects/%s/locations/us-east1/zones/%s", projectID, order.ZoneID),
+        "installationInfo": map[string]interface{}{
+            "rack": map[string]interface{}{
+                "location": order.Hardware.RackLocation,
+                "rackType": order.Hardware.RackType,
+            },
+            "dimensions": map[string]interface{}{
+                "height": 88,
+                "width":  480,
+                "depth":  500,
+            },
+            "weight":            "20kg",
+            "powerRequirements": "120V",
+            "coolingRequirements": "Air cooled",
+            "mountingDetails": map[string]interface{}{
+                "mountType": "rack",
+                "mountPoints": []string{"front", "rear"},
+            },
+            "networkPorts": []map[string]interface{}{
+                {
+                    "portType":   "ethernet",
+                    "portCount":  2,
+                    "speedGbps":  10,
+                },
+            },
+        },
+        "group": map[string]interface{}{
+            "displayName": "Primary Rack Group",
+            "purpose":      "Edge compute node",
+            "annotations": map[string]string{
+                "location": "ny",
+                "rack":     "rack-a1",
+            },
+        },
+        "config": map[string]interface{}{
+            "hardwareModel": "GDC medium",
+            "hardwareType":  "connected-server",
+            "capacity": map[string]interface{}{
+                "cpuCores":    8,
+                "memoryGb":    32,
+                "storageGb":   512,
+                "accelerators": []map[string]interface{}{
+                    {
+                        "type":   "tpu",
+                        "count":  1,
+                    },
+                },
+            },
+            "firmwareVersion": "v1.2.3",
+            "biosSettings": map[string]interface{}{
+                "secureBoot": true,
+                "virtualization": true,
+            },
+        },
+    }
