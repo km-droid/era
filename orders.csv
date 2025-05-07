@@ -1,2 +1,1 @@
-OrderID,SiteID,ZoneID,HardwareID,CompanyName,CompanyEmail,CompanyPhone,DeliveryDate,FirstName,LastName,ContactEmail,ContactPhone,SiteDisplayName,SiteDescription,SiteAddress,SiteRep,SiteEmail,ZoneDisplayName,SKU,RackLocation,RackType
-order-ny-01,site-ny,zone-ny-01,hw-ny-01,AwesomeTech,awesometech@example.com,+199999999,2025-06-01,Dunder,Muffin,DunderMuffin@office.com,+19999999999,"NY,NY",Big Apple,123 New York,Pam,office@office.com,NY Zone,"GDC connected Server (medium, 60 months)",Rack-A1,OpenFrame
+
