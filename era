@@ -1,1 +1,79 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+var (
+	ctx         = context.Background()
+	redisClient *redis.Client
+)
+
+func main() {
+	// Load Redis config from environment variables
+	redisAddr := os.Getenv("REDIS_ADDR") // Format: 10.x.x.x:6379
+	if redisAddr == "" {
+		fmt.Println("REDIS_ADDR is not set")
+		os.Exit(1)
+	}
+
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:        redisAddr,
+		Password:    "", // Set if you use Redis AUTH
+		DB:          0,
+		DialTimeout: 2 * time.Second,
+	})
+
+	http.HandleFunc("/get", getHandler)
+	port := "8080"
+	fmt.Println("Starting server on port", port)
+	http.ListenAndServe(":"+port, nil)
+}
+
+type jsonResponse struct {
+	Key   string `json:"key"`
+	Value string `json:"value,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+func getHandler(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	w.Header().Set("Content-Type", "application/json")
+
+	if key == "" {
+		json.NewEncoder(w).Encode(jsonResponse{Error: "Missing 'key' query parameter"})
+		return
+	}
+
+	val, err := redisClient.Get(ctx, key).Result()
+	if err == redis.Nil {
+		json.NewEncoder(w).Encode(jsonResponse{Key: key, Error: "Key not found"})
+	} else if err != nil {
+		json.NewEncoder(w).Encode(jsonResponse{Key: key, Error: err.Error()})
+	} else {
+		json.NewEncoder(w).Encode(jsonResponse{Key: key, Value: val})
+	}
+}
+
+
+
+======
+
+# syntax=docker/dockerfile:1
+FROM golang:1.21 as builder
+
+WORKDIR /app
+COPY . .
+RUN go build -o server
+
+FROM gcr.io/distroless/base-debian11
+COPY --from=builder /app/server /server
+CMD ["/server"]
 
