@@ -1,79 +1,215 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
+	"flag"
 	"fmt"
-	"net/http"
+	"io/ioutil"
 	"os"
-	"time"
-
-	"github.com/redis/go-redis/v9"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
 )
 
 var (
-	ctx         = context.Background()
-	redisClient *redis.Client
+	gitModuleRe = regexp.MustCompile(`(?m)source\s*=\s*\"git::https://github.com/[^/]+/modules\.git//([^"?]+)(\?ref=[^\"]+)?\"`)
+	moduleSourceRe = regexp.MustCompile(`(?m)source\s*=\s*\"registry\.terraform\.example\.com/org/([^/]+)/google\"`)
+	moduleBlockRe  = regexp.MustCompile(`(?ms)(module\s+\"[^\"]+\"\s*\{[^}]*?source\s*=\s*\"registry\.terraform\.example\.com/org/[^\"]+/google\"[^}]*?)version\s*=\s*\"[^\"]+\"([^}]*?})`)
+	updatedFiles []string
+	mu sync.Mutex
+	dryRun    bool
+	showHelp  bool
 )
 
-func main() {
-	// Load Redis config from environment variables
-	redisAddr := os.Getenv("REDIS_ADDR") // Format: 10.x.x.x:6379
-	if redisAddr == "" {
-		fmt.Println("REDIS_ADDR is not set")
-		os.Exit(1)
+func cloneRepo(repoName string) error {
+	repoURL := fmt.Sprintf("git@github.com:your-org/%s.git", repoName)
+	cmd := exec.Command("git", "clone", repoURL)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func collectTfFiles(repoPath string) ([]string, error) {
+	var tfFiles []string
+	err := filepath.WalkDir(repoPath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".tf") {
+			tfFiles = append(tfFiles, path)
+		}
+		return nil
+	})
+	return tfFiles, err
+}
+
+func transformGitSourceToRegistry(content string, versionConstraint string) string {
+	// Replace old git-based source with registry source and add version line
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		matches := gitModuleRe.FindStringSubmatch(line)
+		if matches != nil {
+			moduleName := matches[1] // e.g., "gclb"
+			sourceLine := fmt.Sprintf("  source  = \"registry.terraform.example.com/org/%s/google\"", moduleName)
+			versionLine := fmt.Sprintf("  version = \"%s\"", versionConstraint)
+			lines[i] = sourceLine + "\n" + versionLine
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func updateModuleVersion(content string, versionConstraint string) string {
+	content = transformGitSourceToRegistry(content, versionConstraint)
+	if moduleBlockRe.MatchString(content) {
+		return moduleBlockRe.ReplaceAllString(content, `$1version = ""`+versionConstraint+`"$2`)
 	}
 
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:        redisAddr,
-		Password:    "", // Set if you use Redis AUTH
-		DB:          0,
-		DialTimeout: 2 * time.Second,
-	})
-
-	http.HandleFunc("/get", getHandler)
-	port := "8080"
-	fmt.Println("Starting server on port", port)
-	http.ListenAndServe(":"+port, nil)
+	// Add version line if module block has a source but no version
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		matches := moduleSourceRe.FindStringSubmatch(line)
+		if matches != nil {
+			versionLine := fmt.Sprintf("  version = \"%s\"", versionConstraint)
+			lines[i] = line + "\n" + versionLine
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
-type jsonResponse struct {
-	Key   string `json:"key"`
-	Value string `json:"value,omitempty"`
-	Error string `json:"error,omitempty"`
-}
-
-func getHandler(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
-	w.Header().Set("Content-Type", "application/json")
-
-	if key == "" {
-		json.NewEncoder(w).Encode(jsonResponse{Error: "Missing 'key' query parameter"})
+func processFile(path string, versionConstraint string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	input, err := ioutil.ReadFile(path)
+	if err != nil {
+		fmt.Printf("❌ Failed to read %s: %v\n", path, err)
 		return
 	}
 
-	val, err := redisClient.Get(ctx, key).Result()
-	if err == redis.Nil {
-		json.NewEncoder(w).Encode(jsonResponse{Key: key, Error: "Key not found"})
-	} else if err != nil {
-		json.NewEncoder(w).Encode(jsonResponse{Key: key, Error: err.Error()})
-	} else {
-		json.NewEncoder(w).Encode(jsonResponse{Key: key, Value: val})
+	content := string(input)
+	updated := updateModuleVersion(content, versionConstraint)
+
+	if updated != content {
+		if dryRun {
+			fmt.Printf("🔍 Would update: %s\n", path)
+		} else {
+			err := ioutil.WriteFile(path, []byte(updated), 0644)
+			if err != nil {
+				fmt.Printf("❌ Failed to write %s: %v\n", path, err)
+				return
+			}
+			fmt.Printf("✅ Updated: %s\n", path)
+			mu.Lock()
+			updatedFiles = append(updatedFiles, path)
+			mu.Unlock()
+		}
 	}
 }
 
+func updateModulesConcurrently(repoPath string, versionConstraint string) error {
+	tfFiles, err := collectTfFiles(repoPath)
+	if err != nil {
+		return err
+	}
 
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
 
-======
+	for _, path := range tfFiles {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(p string) {
+			defer func() { <-sem }()
+			processFile(p, versionConstraint, &wg)
+		}(path)
+	}
 
-# syntax=docker/dockerfile:1
-FROM golang:1.21 as builder
+	wg.Wait()
+	return nil
+}
 
-WORKDIR /app
-COPY . .
-RUN go build -o server
+func createPR(repoName, branchName string) (string, error) {
+	repoDir := filepath.Base(repoName)
+	if err := os.Chdir(repoDir); err != nil {
+		return "", err
+	}
 
-FROM gcr.io/distroless/base-debian11
-COPY --from=builder /app/server /server
-CMD ["/server"]
+	cmds := [][]string{
+		{"git", "checkout", "-b", branchName},
+		{"git", "add", "."},
+		{"git", "commit", "-m", "Update Terraform module version constraints"},
+		{"git", "push", "--set-upstream", "origin", branchName},
+	}
 
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return "", err
+		}
+	}
+
+	prURL := fmt.Sprintf("https://github.com/your-org/%s/compare/main...%s", repoName, branchName)
+	return prURL, nil
+}
+
+func printUsage() {
+	fmt.Println("Usage: terraform-module-migrator [options] <repo-name>")
+	fmt.Println("\nOptions:")
+	fmt.Println("  --dry-run\t	Preview changes without modifying files")
+	fmt.Println("  --version=<v>\tModule version constraint (e.g., 2.0 or ~> 2.0)")
+	fmt.Println("  --help\t\tShow this help message")
+}
+
+func main() {
+	var moduleVersionRaw string
+	flag.BoolVar(&dryRun, "dry-run", false, "Preview changes without modifying files")
+	flag.BoolVar(&showHelp, "help", false, "Show help message")
+	flag.StringVar(&moduleVersionRaw, "version", "1.0", "Module version constraint (e.g., 2.0 or ~> 2.0)")
+	flag.Parse()
+
+	if showHelp || flag.NArg() < 1 {
+		printUsage()
+		os.Exit(0)
+	}
+
+	versionConstraint := moduleVersionRaw
+	if !strings.HasPrefix(versionConstraint, "~") {
+		versionConstraint = fmt.Sprintf("~> %s", moduleVersionRaw)
+	}
+
+	repo := flag.Arg(0)
+	branch := fmt.Sprintf("update-module-version-%s", strings.ReplaceAll(moduleVersionRaw, ".", "-"))
+
+	if err := cloneRepo(repo); err != nil {
+		fmt.Printf("❌ Failed to clone repo: %v\n", err)
+		os.Exit(1)
+	}
+
+	repoPath := filepath.Join(".", filepath.Base(repo))
+	if err := updateModulesConcurrently(repoPath, versionConstraint); err != nil {
+		fmt.Printf("❌ Failed to update modules: %v\n", err)
+		os.Exit(1)
+	}
+
+	if dryRun {
+		fmt.Println("🔍 Dry run complete.")
+		fmt.Printf("🔍 Files that would be updated: %d\n", len(updatedFiles))
+		for _, f := range updatedFiles {
+			fmt.Println("🔍", f)
+		}
+		return
+	}
+
+	prURL, err := createPR(repo, branch)
+	if err != nil {
+		fmt.Printf("❌ Failed to create PR: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Version update completed. Total files updated: %d\n", len(updatedFiles))
+	for _, f := range updatedFiles {
+		fmt.Println("✅", f)
+	}
+	fmt.Printf("🔗 PR created: %s\n", prURL)
+}
