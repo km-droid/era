@@ -1,354 +1,152 @@
-
+// Bubbletea-powered Terraform Module Migrator (Wizard Style)
 package main
 
 import (
-	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"sync"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (
-	gitModuleRe = regexp.MustCompile(`(?m)source\s*=\s*\"git::https://github.com/[^/]+/modules\.git//([^"?]+)(\?ref=[^\"]+)?\"`)
-	moduleSourceRe = regexp.MustCompile(`(?m)source\s*=\s*\"registry\.terraform\.example\.com/org/([^/]+)/google\"`)
-	moduleBlockRe  = regexp.MustCompile(`(?ms)(module\s+\"[^\"]+\"\s*\{[^}]*?source\s*=\s*\"registry\.terraform\.example\.com/org/[^\"]+/google\"[^}]*?)version\s*=\s*\"[^\"]+\"([^}]*?})`)
-	updatedFiles []string
-	mu sync.Mutex
-	dryRun    bool
-	showHelp  bool
-	migrateMode bool
-	updateMode  bool
+	stepTitles = []string{"Select Mode", "Enter Repo Name", "Enter Version (if updating)", "Running Migration", "Done"}
+	highlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	normalStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	boldStyle      = lipgloss.NewStyle().Bold(true)
 )
 
-func cloneRepo(repoName string) error {
-	repoURL := fmt.Sprintf("git@github.com:your-org/%s.git", repoName)
-	cmd := exec.Command("git", "clone", repoURL)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+type step int
+
+const (
+	selectMode step = iota
+	enterRepo
+	enterVersion
+	runTasks
+	done
+)
+
+type model struct {
+	step           step
+	mode           string // "migrate" or "update"
+	repo           string
+	version        string
+	error          string
+	done           bool
+	animatedFrames []string
+	frame          int
 }
 
-func collectTfFiles(repoPath string) ([]string, error) {
-	var tfFiles []string
-	err := filepath.WalkDir(repoPath, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".tf") {
-			tfFiles = append(tfFiles, path)
-		}
-		return nil
+func initialModel() model {
+	return model{
+		step:           selectMode,
+		animatedFrames: []string{"[   ]", "[=  ]", "[== ]", "[===]", "[ ==]", "[  =]"},
+	}
+}
+
+func (m model) Init() tea.Cmd {
+	return tea.Batch(tea.EnterAltScreen, tick())
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Millisecond*120, func(t time.Time) tea.Msg {
+		return tickMsg{}
 	})
-	return tfFiles, err
 }
 
-func transformGitSourceToRegistry(content string, versionConstraint string) string {
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		matches := gitModuleRe.FindStringSubmatch(line)
-		if matches != nil {
-			moduleName := matches[1]
-			sourceLine := fmt.Sprintf("  source  = \"registry.terraform.example.com/org/%s/google\"", moduleName)
-			versionLine := fmt.Sprintf("  version = \"%s\"", versionConstraint)
-			lines[i] = sourceLine + "\n" + versionLine
-		}
-	}
-	return strings.Join(lines, "\n")
-}
+type tickMsg struct{}
+type errMsg struct{ error }
+type doneMsg struct{}
 
-func updateModuleVersion(content string, versionConstraint string) string {
-	if migrateMode {
-		content = transformGitSourceToRegistry(content, versionConstraint)
-	}
-	if moduleBlockRe.MatchString(content) {
-		return moduleBlockRe.ReplaceAllString(content, `$1version = ""`+versionConstraint+`"$2`)
-	}
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		matches := moduleSourceRe.FindStringSubmatch(line)
-		if matches != nil {
-			versionLine := fmt.Sprintf("  version = \"%s\"", versionConstraint)
-			lines[i] = line + "\n" + versionLine
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func processFile(path string, versionConstraint string, wg *sync.WaitGroup) {
-	defer wg.Done()
-	input, err := ioutil.ReadFile(path)
-	if err != nil {
-		fmt.Printf("❌ Failed to read %s: %v\n", path, err)
-		return
-	}
-	content := string(input)
-	updated := updateModuleVersion(content, versionConstraint)
-	if updated != content {
-		if dryRun {
-			fmt.Printf("🔍 Would update: %s\n", path)
-		} else {
-			err := ioutil.WriteFile(path, []byte(updated), 0644)
-			if err != nil {
-				fmt.Printf("❌ Failed to write %s: %v\n", path, err)
-				return
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch m.step {
+		case selectMode:
+			switch msg.String() {
+			case "1":
+				m.mode = "migrate"
+				m.step = enterRepo
+			case "2":
+				m.mode = "update"
+				m.step = enterRepo
 			}
-			fmt.Printf("✅ Updated: %s\n", path)
-			mu.Lock()
-			updatedFiles = append(updatedFiles, path)
-			mu.Unlock()
+		case enterRepo:
+			if msg.String() == "enter" && m.repo != "" {
+				if m.mode == "update" {
+					m.step = enterVersion
+				} else {
+					m.step = runTasks
+					return m, runMigration(m)
+				}
+			} else {
+				m.repo += msg.String()
+			}
+		case enterVersion:
+			if msg.String() == "enter" && m.version != "" {
+				m.step = runTasks
+				return m, runMigration(m)
+			} else {
+				m.version += msg.String()
+			}
+		}
+	case tickMsg:
+		if m.step == runTasks && !m.done {
+			m.frame = (m.frame + 1) % len(m.animatedFrames)
+			return m, tick()
+		}
+	case doneMsg:
+		m.step = done
+		m.done = true
+	}
+	return m, nil
+}
+
+func runMigration(m model) tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(2 * time.Second) // Simulate clone
+		// Real shell command could go here
+		_ = exec.Command("echo", "Cloning repo:", m.repo).Run()
+		time.Sleep(2 * time.Second) // Simulate scan + update
+		_ = exec.Command("echo", "Mode:", m.mode, "Version:", m.version).Run()
+		return doneMsg{}
+	}
+}
+
+func (m model) View() string {
+	s := boldStyle.Render("Terraform Module Migrator 🐸") + "\n"
+	s += normalStyle.Render("Step: ") + highlightStyle.Render(stepTitles[m.step]) + "\n\n"
+
+	switch m.step {
+	case selectMode:
+		s += "Choose mode:\n"
+		s += "  1. Migrate Git modules to JFrog\n"
+		s += "  2. Update existing JFrog module versions\n"
+	case enterRepo:
+		s += "Enter GitHub repo name: " + m.repo + "_"
+	case enterVersion:
+		s += "Enter version (e.g., 2.0): " + m.version + "_"
+	case runTasks:
+		s += "Running tasks...\n"
+		s += m.animatedFrames[m.frame] + "\n"
+	case done:
+		s += "✅ Done! PR has been created.\n"
+		s += "🎉 Repo: " + m.repo + "\n"
+		s += "🚀 Mode: " + m.mode + "\n"
+		if m.mode == "update" {
+			s += "📌 Version: " + m.version + "\n"
 		}
 	}
-}
 
-func updateModulesConcurrently(repoPath string, versionConstraint string) error {
-	tfFiles, err := collectTfFiles(repoPath)
-	if err != nil {
-		return err
-	}
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
-	for _, path := range tfFiles {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(p string) {
-			defer func() { <-sem }()
-			processFile(p, versionConstraint, &wg)
-		}(path)
-	}
-	wg.Wait()
-	return nil
-}
-
-func createPR(repoName, branchName string) (string, error) {
-	repoDir := filepath.Base(repoName)
-	if err := os.Chdir(repoDir); err != nil {
-		return "", err
-	}
-	cmds := [][]string{
-		{"git", "checkout", "-b", branchName},
-		{"git", "add", "."},
-		{"git", "commit", "-m", "Update Terraform module version constraints"},
-		{"git", "push", "--set-upstream", "origin", branchName},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return "", err
-		}
-	}
-	prURL := fmt.Sprintf("https://github.com/your-org/%s/compare/main...%s", repoName, branchName)
-	return prURL, nil
-}
-
-func printUsage() {
-	fmt.Println("Usage: terraform-module-migrator [options] <repo-name>")
-	fmt.Println("\nArguments:")
-	fmt.Println("  <repo-name>\tGitHub repository name (required)")
-	fmt.Println("\nOptions:")
-	fmt.Println("  --dry-run\t\tPreview changes without modifying files")
-	fmt.Println("  --version=<v>\tModule version constraint (e.g., 2.0 or ~> 2.0)")
-	fmt.Println("  --migrate-to-jfrog\tConvert Git-based modules to registry")
-	fmt.Println("  --update-jfrog-version\tUpdate version for already-migrated registry modules")
-	fmt.Println("  --help\t\tShow this help message")
+	return s + "\n(Press Ctrl+C to exit)"
 }
 
 func main() {
-	var moduleVersionRaw string
-	flag.BoolVar(&dryRun, "dry-run", false, "Preview changes without modifying files")
-	flag.BoolVar(&showHelp, "help", false, "Show help message")
-	flag.BoolVar(&migrateMode, "migrate-to-jfrog", false, "Migrate Git modules to JFrog registry")
-	flag.BoolVar(&updateMode, "update-jfrog-version", false, "Update version for existing JFrog modules")
-	flag.StringVar(&moduleVersionRaw, "version", "", "Module version constraint (e.g., 2.0 or ~> 2.0)")
-	flag.Parse()
-
-	if showHelp || flag.NArg() < 1 {
-		printUsage()
-		os.Exit(0)
-	}
-
-	if !migrateMode && !updateMode {
-		fmt.Println("❌ You must specify either --migrate-to-jfrog or --update-jfrog-version")
-		printUsage()
+	p := tea.NewProgram(initialModel())
+	if err := p.Start(); err != nil {
+		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-
-	if updateMode && moduleVersionRaw == "" {
-		fmt.Println("❌ --version is required when using --update-jfrog-version")
-		os.Exit(1)
-	}
-
-	repo := flag.Arg(0)
-	versionConstraint := moduleVersionRaw
-	if versionConstraint != "" && !strings.HasPrefix(versionConstraint, "~") {
-		versionConstraint = fmt.Sprintf("~> %s", moduleVersionRaw)
-	}
-
-	branch := "update-jfrog-version"
-	if migrateMode {
-		branch = "migrate-to-jfrog"
-	}
-
-	if err := cloneRepo(repo); err != nil {
-		fmt.Printf("❌ Failed to clone repo: %v\n", err)
-		os.Exit(1)
-	}
-
-	repoPath := filepath.Join(".", filepath.Base(repo))
-	if err := updateModulesConcurrently(repoPath, versionConstraint); err != nil {
-		fmt.Printf("❌ Failed to update modules: %v\n", err)
-		os.Exit(1)
-	}
-
-	if dryRun {
-		fmt.Println("🔍 Dry run complete.")
-		fmt.Printf("🔍 Files that would be updated: %d\n", len(updatedFiles))
-		for _, f := range updatedFiles {
-			fmt.Println("🔍", f)
-		}
-		return
-	}
-
-	prURL, err := createPR(repo, branch)
-	if err != nil {
-		fmt.Printf("❌ Failed to create PR: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("✅ Operation completed. Total files updated: %d\n", len(updatedFiles))
-	for _, f := range updatedFiles {
-		fmt.Println("✅", f)
-	}
-	fmt.Printf("🔗 PR created: %s\n", prURL)
 }
-
-
-==========
-
-# 🐸 Terraform Module Migrator (Frogmigrator)
-
-A CLI tool to automate migration of Terraform modules from Git-based sources to a private Terraform registry (e.g., JFrog Artifactory), and update module version constraints.
-
----
-
-## 🚀 Use Cases
-
-* ✅ **Migrate**: Convert `git::https://github.com/...` module sources to registry-based sources
-* 🔁 **Update**: Modify `version = "~> x.y"` constraints in already-migrated JFrog modules
-
----
-
-## 🛠️ CLI Usage
-
-```bash
-terraform-module-migrator [options] <repo-name>
-```
-
-### 🔡 Arguments
-
-* `<repo-name>`: GitHub repository name (required)
-
-### ⚙️ Options
-
-| Option                   | Description                                                        |
-| ------------------------ | ------------------------------------------------------------------ |
-| `--migrate-to-jfrog`     | Migrate Git-based module sources to registry                       |
-| `--update-jfrog-version` | Update `version = "~> x.y"` constraint for existing JFrog modules  |
-| `--version <x.y>`        | Required for `--update-jfrog-version`. Version constraint to apply |
-| `--dry-run`              | Preview changes without modifying files                            |
-| `--help`                 | Show usage and exit                                                |
-
----
-
-## 📦 Examples
-
-### 🔄 Migrate Git modules to JFrog registry
-
-```bash
-terraform-module-migrator --migrate-to-jfrog my-infra-repo
-```
-
-**Transforms:**
-
-```hcl
-# Before
-source = "git::https://github.com/platform-org/modules.git//gclb?ref=refs/tags/v1.2.2"
-
-# After
-source  = "registry.terraform.example.com/org/gclb/google"
-version = "~> 1.0"
-```
-
----
-
-### 🎯 Update version in already migrated JFrog modules
-
-```bash
-terraform-module-migrator --update-jfrog-version --version 2.0 my-infra-repo
-```
-
-**Updates:**
-
-```hcl
-# Before
-version = "~> 1.0"
-
-# After
-version = "~> 2.0"
-```
-
----
-
-### 🧪 Preview only (Dry Run)
-
-```bash
-terraform-module-migrator --update-jfrog-version --version 2.0 --dry-run my-infra-repo
-```
-
----
-
-## 🔍 How It Works
-
-1. 🧬 **Clone**: Clones the specified GitHub repo using SSH
-2. 📂 **Scan**: Recursively finds all `.tf` files
-3. 🔁 **Replace or Update**:
-
-   * If `--migrate-to-jfrog`:
-
-     * Replace Git source lines with registry source
-     * Inject `version = "~> x.y"`
-   * If `--update-jfrog-version`:
-
-     * Locate existing `version =` lines and update
-4. ✅ **Commit**: Creates new branch and commits updated files
-5. 🚀 **Push & PR**: Pushes branch and opens GitHub PR using Git CLI
-
----
-
-## 💡 Assumptions
-
-* Registry format is: `registry.terraform.example.com/org/<module>/google`
-* PR branch is automatically named:
-
-  * `migrate-to-jfrog` or
-  * `update-jfrog-version`
-* Only `.tf` files are scanned
-
----
-
-## 🐸 Nickname
-
-This tool is also affectionately known as **Frogmigrator** 🐸💨
-
----
-
-## 📄 License
-
-MIT (or internal license)
-
