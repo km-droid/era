@@ -227,3 +227,128 @@ func main() {
 	}
 	fmt.Printf("🔗 PR created: %s\n", prURL)
 }
+
+
+==========
+
+# 🐸 Terraform Module Migrator (Frogmigrator)
+
+A CLI tool to automate migration of Terraform modules from Git-based sources to a private Terraform registry (e.g., JFrog Artifactory), and update module version constraints.
+
+---
+
+## 🚀 Use Cases
+
+* ✅ **Migrate**: Convert `git::https://github.com/...` module sources to registry-based sources
+* 🔁 **Update**: Modify `version = "~> x.y"` constraints in already-migrated JFrog modules
+
+---
+
+## 🛠️ CLI Usage
+
+```bash
+terraform-module-migrator [options] <repo-name>
+```
+
+### 🔡 Arguments
+
+* `<repo-name>`: GitHub repository name (required)
+
+### ⚙️ Options
+
+| Option                   | Description                                                        |
+| ------------------------ | ------------------------------------------------------------------ |
+| `--migrate-to-jfrog`     | Migrate Git-based module sources to registry                       |
+| `--update-jfrog-version` | Update `version = "~> x.y"` constraint for existing JFrog modules  |
+| `--version <x.y>`        | Required for `--update-jfrog-version`. Version constraint to apply |
+| `--dry-run`              | Preview changes without modifying files                            |
+| `--help`                 | Show usage and exit                                                |
+
+---
+
+## 📦 Examples
+
+### 🔄 Migrate Git modules to JFrog registry
+
+```bash
+terraform-module-migrator --migrate-to-jfrog my-infra-repo
+```
+
+**Transforms:**
+
+```hcl
+# Before
+source = "git::https://github.com/platform-org/modules.git//gclb?ref=refs/tags/v1.2.2"
+
+# After
+source  = "registry.terraform.example.com/org/gclb/google"
+version = "~> 1.0"
+```
+
+---
+
+### 🎯 Update version in already migrated JFrog modules
+
+```bash
+terraform-module-migrator --update-jfrog-version --version 2.0 my-infra-repo
+```
+
+**Updates:**
+
+```hcl
+# Before
+version = "~> 1.0"
+
+# After
+version = "~> 2.0"
+```
+
+---
+
+### 🧪 Preview only (Dry Run)
+
+```bash
+terraform-module-migrator --update-jfrog-version --version 2.0 --dry-run my-infra-repo
+```
+
+---
+
+## 🔍 How It Works
+
+1. 🧬 **Clone**: Clones the specified GitHub repo using SSH
+2. 📂 **Scan**: Recursively finds all `.tf` files
+3. 🔁 **Replace or Update**:
+
+   * If `--migrate-to-jfrog`:
+
+     * Replace Git source lines with registry source
+     * Inject `version = "~> x.y"`
+   * If `--update-jfrog-version`:
+
+     * Locate existing `version =` lines and update
+4. ✅ **Commit**: Creates new branch and commits updated files
+5. 🚀 **Push & PR**: Pushes branch and opens GitHub PR using Git CLI
+
+---
+
+## 💡 Assumptions
+
+* Registry format is: `registry.terraform.example.com/org/<module>/google`
+* PR branch is automatically named:
+
+  * `migrate-to-jfrog` or
+  * `update-jfrog-version`
+* Only `.tf` files are scanned
+
+---
+
+## 🐸 Nickname
+
+This tool is also affectionately known as **Frogmigrator** 🐸💨
+
+---
+
+## 📄 License
+
+MIT (or internal license)
+
