@@ -38,6 +38,7 @@ const (
 )
 
 type model struct {
+	logsVisible    bool
 	step           step
 	mode           string
 	repo           string
@@ -101,6 +102,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			m.quitting = true
 			return m, tea.Quit
+		case "v":
+			m.logsVisible = !m.logsVisible
 		}
 		switch m.step {
 		case selectMode:
@@ -188,8 +191,7 @@ func runMigration(m model) tea.Cmd {
 		return doneMsg{}
 	}
 }
-	}
-}
+	
 
 func cloneRepo(repoName string) error {
 	repoURL := fmt.Sprintf("git@github.com:your-org/%s.git", repoName)
@@ -312,67 +314,44 @@ func createPR(repoName, branchName string) (string, error) {
 
 func (m model) View() string {
 	if m.quitting {
-		return "👋 Exiting...
-"
+		return "👋 Exiting..."
 	}
 
-	s := boldStyle.Render("Terraform Module Migrator 🐸") + "
-"
-	s += normalStyle.Render("Step: ") + highlightStyle.Render(stepTitles[m.step]) + "
-
-"
+	s := boldStyle.Render("Terraform Module Migrator 🐸") + ""
+	s += normalStyle.Render("Step: ") + highlightStyle.Render(stepTitles[m.step]) + ""
 
 	switch m.step {
 	case selectMode:
-		s += "Choose mode:
-"
-		s += "  1. Migrate Git modules to JFrog
-"
-		s += "  2. Update existing JFrog module versions
-"
+		s += "Choose mode:"
+		s += "  1. Migrate Git modules to JFrog"
+		s += "  2. Update existing JFrog module versions"
 	case enterRepo:
-		s += "Enter GitHub repo name:
-" + m.repoInput.View() + "
-"
+		s += "Enter GitHub repo name:" + m.repoInput.View() + ""
 	case enterVersion:
-		s += "Enter version constraint:
-" + m.versionInput.View() + "
-"
+		s += "Enter version constraint:" + m.versionInput.View() + ""
 	case runTasks:
-		s += "Running tasks...
-"
-		s += lipgloss.NewStyle().Foreground(lipgloss.Gradient("62", "105")).Render(m.animatedFrames[m.frame]) + "
-"
+		s += "Running tasks..."
+		s += lipgloss.NewStyle().Foreground(lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)).Render(m.animatedFrames[m.frame]) + ""
 		if m.logsVisible {
-			s += "
-" + boldStyle.Render("Logs:") + "
-"
+			s += "" + boldStyle.Render("Logs:") + ""
 			for _, log := range m.logs {
-				s += lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(log) + "
-"
+				s += lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(log) + ""
 			}
 		}
 	case done:
 		if m.error != "" {
-			s += "❌ Error: " + m.error + "
-"
-			return s + "
-Press q or Ctrl+C to quit."
+			s += "❌ Error: " + m.error + ""
+			return s + "Press q or Ctrl+C to quit."
 		}
-		s += "✅ Done! PR has been created.
-"
-		s += "🎉 Repo: " + m.repo + "
-"
-		s += "🚀 Mode: " + m.mode + "
-"
+		s += "✅ Done! PR has been created."
+		s += "🎉 Repo: " + m.repo + ""
+		s += "🚀 Mode: " + m.mode + ""
 		if m.mode == "update" {
-			s += "📌 Version: " + m.version + "
-"
+			s += "📌 Version: " + m.version + ""
 		}
 	}
 
-	s += "
-Press q or Ctrl+C to quit. Press 'v' to toggle logs."
+	s += "Press q or Ctrl+C to quit. Press 'v' to toggle logs."
 	return s
 }
 
