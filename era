@@ -2,7 +2,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -15,16 +14,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	textinput "github.com/charmbracelet/bubbles/textinput"
 )
 
 var (
-	gitModuleRe = regexp.MustCompile(`(?m)source\s*=\s*\"git::https://github.com/[^/]+/modules\.git//([^"?]+)(\?ref=[^\"]+)?\"`)
-	moduleSourceRe = regexp.MustCompile(`(?m)source\s*=\s*\"registry\.terraform\.example\.com/org/([^/]+)/google\"`)
-	moduleBlockRe  = regexp.MustCompile(`(?ms)(module\s+\"[^\"]+\"\s*\{[^}]*?source\s*=\s*\"registry\.terraform\.example\.com/org/[^\"]+/google\"[^}]*?)version\s*=\s*\"[^\"]+\"([^}]*?})`)
-	stepTitles     = []string{"Select Mode", "Enter Repo Name", "Enter Version (if updating)", "Running Migration", "Done"}
-	highlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	normalStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	boldStyle      = lipgloss.NewStyle().Bold(true)
+	gitModuleRe      = regexp.MustCompile(`(?m)source\s*=\s*\"git::https://github.com/[^/]+/modules\.git//([^"?]+)(\?ref=[^\"]+)?\"`)
+	moduleSourceRe   = regexp.MustCompile(`(?m)source\s*=\s*\"registry\.terraform\.example\.com/org/([^/]+)/google\"`)
+	moduleBlockRe    = regexp.MustCompile(`(?ms)(module\s+\"[^\"]+\"\s*\{[^}]*?source\s*=\s*\"registry\.terraform\.example\.com/org/[^\"]+/google\"[^}]*?)version\s*=\s*\"[^\"]+\"([^}]*?})`)
+	stepTitles       = []string{"Select Mode", "Enter Repo Name", "Enter Version (if updating)", "Running Migration", "Done"}
+	highlightStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	normalStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	boldStyle        = lipgloss.NewStyle().Bold(true)
 )
 
 type step int
@@ -42,17 +42,39 @@ type model struct {
 	mode           string
 	repo           string
 	version        string
+	repoInput      textinput.Model
+	versionInput   textinput.Model
 	error          string
 	done           bool
 	animatedFrames []string
 	frame          int
 	quitting       bool
-	mu             sync.Mutex
+	logs           []string // added for real-time logs
 }
 
 func initialModel() model {
+	border := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).Padding(0, 1).BorderForeground(lipgloss.Color("63"))
+	repoInput := textinput.New()
+	repoInput.Prompt = "→ "
+	repoInput.PromptStyle = border
+	repoInput.TextStyle = border
+	repoInput.Placeholder = "example-repo"
+	repoInput.Focus()
+	repoInput.CharLimit = 64
+	repoInput.Width = 40
+
+	versionInput := textinput.New()
+	versionInput.Prompt = "→ "
+	versionInput.PromptStyle = border
+	versionInput.TextStyle = border
+	versionInput.Placeholder = "e.g. 2.0"
+	versionInput.CharLimit = 16
+	versionInput.Width = 20
+
 	return model{
 		step:           selectMode,
+		repoInput:      repoInput,
+		versionInput:   versionInput,
 		animatedFrames: []string{"[   ]", "[=  ]", "[== ]", "[===]", "[ ==]", "[  =]"},
 		quitting:       false,
 	}
@@ -91,27 +113,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.step = enterRepo
 			}
 		case enterRepo:
-			if msg.Type == tea.KeyEnter && m.repo != "" {
+			var cmd tea.Cmd
+			m.repoInput, cmd = m.repoInput.Update(msg)
+			if msg.Type == tea.KeyEnter && m.repoInput.Value() != "" {
+				m.repo = m.repoInput.Value()
 				if m.mode == "update" {
 					m.step = enterVersion
 				} else {
 					m.step = runTasks
 					return m, runMigration(m)
 				}
-			} else if msg.Type == tea.KeyBackspace && len(m.repo) > 0 {
-				m.repo = m.repo[:len(m.repo)-1]
-			} else if len(msg.String()) == 1 {
-				m.repo += msg.String()
 			}
+			return m, cmd
 		case enterVersion:
-			if msg.Type == tea.KeyEnter && m.version != "" {
+			var cmd tea.Cmd
+			m.versionInput, cmd = m.versionInput.Update(msg)
+			if msg.Type == tea.KeyEnter && m.versionInput.Value() != "" {
+				m.version = m.versionInput.Value()
 				m.step = runTasks
 				return m, runMigration(m)
-			} else if msg.Type == tea.KeyBackspace && len(m.version) > 0 {
-				m.version = m.version[:len(m.version)-1]
-			} else if len(msg.String()) == 1 {
-				m.version += msg.String()
 			}
+			return m, cmd
 		}
 	case tickMsg:
 		if m.step == runTasks && !m.done {
@@ -142,13 +164,30 @@ func runMigration(m model) tea.Cmd {
 		if m.version != "" {
 			versionConstraint = "~> " + m.version
 		}
-		if err := updateModulesConcurrently(repoPath, versionConstraint); err != nil {
+		tfFiles, err := collectTfFiles(repoPath)
+		if err != nil {
 			return errMsg{err}
+		}
+		for _, path := range tfFiles {
+			input, err := ioutil.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			content := string(input)
+			updated := transformModule(content, versionConstraint)
+			if updated != content {
+				ioutil.WriteFile(path, []byte(updated), 0644)
+				fmt.Println("✔ Updated:", path)
+			}
 		}
 		if _, err := createPR(m.repo, branch); err != nil {
 			return errMsg{err}
 		}
+		prURL, _ := createPR(m.repo, branch)
+		_ = exec.Command("open", prURL).Start()
 		return doneMsg{}
+	}
+}
 	}
 }
 
@@ -156,14 +195,13 @@ func cloneRepo(repoName string) error {
 	repoURL := fmt.Sprintf("git@github.com:your-org/%s.git", repoName)
 	repoDir := filepath.Base(repoName)
 	if _, err := os.Stat(repoDir); err == nil {
-		fmt.Printf("⚠️  Removing existing directory: %s\n", repoDir)
 		if err := os.RemoveAll(repoDir); err != nil {
 			return fmt.Errorf("failed to clean up existing directory %s: %w", repoDir, err)
 		}
 	}
 	cmd := exec.Command("git", "clone", repoURL)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	return cmd.Run()
 }
 
@@ -204,7 +242,6 @@ func processFile(path string, versionConstraint string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	input, err := ioutil.ReadFile(path)
 	if err != nil {
-		fmt.Printf("❌ Failed to read %s: %v\n", path, err)
 		return
 	}
 	content := string(input)
@@ -215,24 +252,34 @@ func processFile(path string, versionConstraint string, wg *sync.WaitGroup) {
 }
 
 func transformModule(content, versionConstraint string) string {
-	if gitModuleRe.MatchString(content) {
-		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			matches := gitModuleRe.FindStringSubmatch(line)
-			if matches != nil {
-				moduleName := matches[1]
-				lines[i] = fmt.Sprintf("  source  = \"registry.terraform.example.com/org/%s/google\"\n  version = \"%s\"", moduleName, versionConstraint)
+	lines := strings.Split(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		if matches := gitModuleRe.FindStringSubmatch(lines[i]); matches != nil {
+			moduleName := matches[1]
+			lines[i] = fmt.Sprintf("  source  = \"registry.terraform.example.com/org/%s/google\"", moduleName)
+			for j := i + 1; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == "}" {
+					lines = append(lines[:j], append([]string{fmt.Sprintf("  version = \"%s\"", versionConstraint)}, lines[j:]...)...)
+					break
+				}
 			}
+			break
 		}
-		content = strings.Join(lines, "\n")
 	}
+	content = strings.Join(lines, "\n")
 	if moduleBlockRe.MatchString(content) {
 		content = moduleBlockRe.ReplaceAllString(content, `$1version = ""`+versionConstraint+`"$2`)
 	} else if moduleSourceRe.MatchString(content) {
 		lines := strings.Split(content, "\n")
 		for i, line := range lines {
 			if moduleSourceRe.MatchString(line) {
-				lines[i] = line + "\n  version = \"" + versionConstraint + "\""
+				for j := i + 1; j < len(lines); j++ {
+					if strings.TrimSpace(lines[j]) == "}" {
+						lines = append(lines[:j], append([]string{fmt.Sprintf("  version = \"%s\"", versionConstraint)}, lines[j:]...)...)
+						break
+					}
+				}
+				break
 			}
 		}
 		content = strings.Join(lines, "\n")
@@ -253,8 +300,8 @@ func createPR(repoName, branchName string) (string, error) {
 	}
 	for _, args := range cmds {
 		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = nil
+		cmd.Stderr = nil
 		if err := cmd.Run(); err != nil {
 			return "", err
 		}
@@ -265,35 +312,67 @@ func createPR(repoName, branchName string) (string, error) {
 
 func (m model) View() string {
 	if m.quitting {
-		return "👋 Exiting...\n"
+		return "👋 Exiting...
+"
 	}
-	s := boldStyle.Render("Terraform Module Migrator 🐸") + "\n"
-	s += normalStyle.Render("Step: ") + highlightStyle.Render(stepTitles[m.step]) + "\n\n"
+
+	s := boldStyle.Render("Terraform Module Migrator 🐸") + "
+"
+	s += normalStyle.Render("Step: ") + highlightStyle.Render(stepTitles[m.step]) + "
+
+"
+
 	switch m.step {
 	case selectMode:
-		s += "Choose mode:\n"
-		s += "  1. Migrate Git modules to JFrog\n"
-		s += "  2. Update existing JFrog module versions\n"
+		s += "Choose mode:
+"
+		s += "  1. Migrate Git modules to JFrog
+"
+		s += "  2. Update existing JFrog module versions
+"
 	case enterRepo:
-		s += "Enter GitHub repo name: " + m.repo + "_"
+		s += "Enter GitHub repo name:
+" + m.repoInput.View() + "
+"
 	case enterVersion:
-		s += "Enter version (e.g., 2.0): " + m.version + "_"
+		s += "Enter version constraint:
+" + m.versionInput.View() + "
+"
 	case runTasks:
-		s += "Running tasks...\n"
-		s += m.animatedFrames[m.frame] + "\n"
+		s += "Running tasks...
+"
+		s += lipgloss.NewStyle().Foreground(lipgloss.Gradient("62", "105")).Render(m.animatedFrames[m.frame]) + "
+"
+		if m.logsVisible {
+			s += "
+" + boldStyle.Render("Logs:") + "
+"
+			for _, log := range m.logs {
+				s += lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(log) + "
+"
+			}
+		}
 	case done:
 		if m.error != "" {
-			s += "❌ Error: " + m.error + "\n"
-			return s + "\nPress q or Ctrl+C to quit."
+			s += "❌ Error: " + m.error + "
+"
+			return s + "
+Press q or Ctrl+C to quit."
 		}
-		s += "✅ Done! PR has been created.\n"
-		s += "🎉 Repo: " + m.repo + "\n"
-		s += "🚀 Mode: " + m.mode + "\n"
+		s += "✅ Done! PR has been created.
+"
+		s += "🎉 Repo: " + m.repo + "
+"
+		s += "🚀 Mode: " + m.mode + "
+"
 		if m.mode == "update" {
-			s += "📌 Version: " + m.version + "\n"
+			s += "📌 Version: " + m.version + "
+"
 		}
 	}
-	s += "\nPress q or Ctrl+C to quit."
+
+	s += "
+Press q or Ctrl+C to quit. Press 'v' to toggle logs."
 	return s
 }
 
