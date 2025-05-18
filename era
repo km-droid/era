@@ -2,9 +2,15 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,7 +18,10 @@ import (
 )
 
 var (
-	stepTitles = []string{"Select Mode", "Enter Repo Name", "Enter Version (if updating)", "Running Migration", "Done"}
+	gitModuleRe = regexp.MustCompile(`(?m)source\s*=\s*\"git::https://github.com/[^/]+/modules\.git//([^"?]+)(\?ref=[^\"]+)?\"`)
+	moduleSourceRe = regexp.MustCompile(`(?m)source\s*=\s*\"registry\.terraform\.example\.com/org/([^/]+)/google\"`)
+	moduleBlockRe  = regexp.MustCompile(`(?ms)(module\s+\"[^\"]+\"\s*\{[^}]*?source\s*=\s*\"registry\.terraform\.example\.com/org/[^\"]+/google\"[^}]*?)version\s*=\s*\"[^\"]+\"([^}]*?})`)
+	stepTitles     = []string{"Select Mode", "Enter Repo Name", "Enter Version (if updating)", "Running Migration", "Done"}
 	highlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	normalStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	boldStyle      = lipgloss.NewStyle().Bold(true)
@@ -30,19 +39,22 @@ const (
 
 type model struct {
 	step           step
-	mode           string // "migrate" or "update"
+	mode           string
 	repo           string
 	version        string
 	error          string
 	done           bool
 	animatedFrames []string
 	frame          int
+	quitting       bool
+	mu             sync.Mutex
 }
 
 func initialModel() model {
 	return model{
 		step:           selectMode,
 		animatedFrames: []string{"[   ]", "[=  ]", "[== ]", "[===]", "[ ==]", "[  =]"},
+		quitting:       false,
 	}
 }
 
@@ -57,12 +69,17 @@ func tick() tea.Cmd {
 }
 
 type tickMsg struct{}
-type errMsg struct{ error }
 type doneMsg struct{}
+type errMsg struct{ err error }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			m.quitting = true
+			return m, tea.Quit
+		}
 		switch m.step {
 		case selectMode:
 			switch msg.String() {
@@ -74,21 +91,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.step = enterRepo
 			}
 		case enterRepo:
-			if msg.String() == "enter" && m.repo != "" {
+			if msg.Type == tea.KeyEnter && m.repo != "" {
 				if m.mode == "update" {
 					m.step = enterVersion
 				} else {
 					m.step = runTasks
 					return m, runMigration(m)
 				}
-			} else {
+			} else if msg.Type == tea.KeyBackspace && len(m.repo) > 0 {
+				m.repo = m.repo[:len(m.repo)-1]
+			} else if len(msg.String()) == 1 {
 				m.repo += msg.String()
 			}
 		case enterVersion:
-			if msg.String() == "enter" && m.version != "" {
+			if msg.Type == tea.KeyEnter && m.version != "" {
 				m.step = runTasks
 				return m, runMigration(m)
-			} else {
+			} else if msg.Type == tea.KeyBackspace && len(m.version) > 0 {
+				m.version = m.version[:len(m.version)-1]
+			} else if len(msg.String()) == 1 {
 				m.version += msg.String()
 			}
 		}
@@ -100,25 +121,154 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		m.step = done
 		m.done = true
+	case errMsg:
+		m.error = msg.err.Error()
+		m.step = done
 	}
 	return m, nil
 }
 
 func runMigration(m model) tea.Cmd {
 	return func() tea.Msg {
-		time.Sleep(2 * time.Second) // Simulate clone
-		// Real shell command could go here
-		_ = exec.Command("echo", "Cloning repo:", m.repo).Run()
-		time.Sleep(2 * time.Second) // Simulate scan + update
-		_ = exec.Command("echo", "Mode:", m.mode, "Version:", m.version).Run()
+		branch := "migrate-to-jfrog"
+		if m.mode == "update" {
+			branch = "update-jfrog-version"
+		}
+		if err := cloneRepo(m.repo); err != nil {
+			return errMsg{err}
+		}
+		repoPath := filepath.Join(".", filepath.Base(m.repo))
+		versionConstraint := "~> 1.0"
+		if m.version != "" {
+			versionConstraint = "~> " + m.version
+		}
+		if err := updateModulesConcurrently(repoPath, versionConstraint); err != nil {
+			return errMsg{err}
+		}
+		if _, err := createPR(m.repo, branch); err != nil {
+			return errMsg{err}
+		}
 		return doneMsg{}
 	}
 }
 
+func cloneRepo(repoName string) error {
+	repoURL := fmt.Sprintf("git@github.com:your-org/%s.git", repoName)
+	repoDir := filepath.Base(repoName)
+	if _, err := os.Stat(repoDir); err == nil {
+		fmt.Printf("⚠️  Removing existing directory: %s\n", repoDir)
+		if err := os.RemoveAll(repoDir); err != nil {
+			return fmt.Errorf("failed to clean up existing directory %s: %w", repoDir, err)
+		}
+	}
+	cmd := exec.Command("git", "clone", repoURL)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func collectTfFiles(repoPath string) ([]string, error) {
+	var tfFiles []string
+	err := filepath.WalkDir(repoPath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".tf") {
+			tfFiles = append(tfFiles, path)
+		}
+		return nil
+	})
+	return tfFiles, err
+}
+
+func updateModulesConcurrently(repoPath string, versionConstraint string) error {
+	tfFiles, err := collectTfFiles(repoPath)
+	if err != nil {
+		return err
+	}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for _, path := range tfFiles {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(p string) {
+			defer func() { <-sem }()
+			processFile(p, versionConstraint, &wg)
+		}(path)
+	}
+	wg.Wait()
+	return nil
+}
+
+func processFile(path string, versionConstraint string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	input, err := ioutil.ReadFile(path)
+	if err != nil {
+		fmt.Printf("❌ Failed to read %s: %v\n", path, err)
+		return
+	}
+	content := string(input)
+	updated := transformModule(content, versionConstraint)
+	if updated != content {
+		ioutil.WriteFile(path, []byte(updated), 0644)
+	}
+}
+
+func transformModule(content, versionConstraint string) string {
+	if gitModuleRe.MatchString(content) {
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			matches := gitModuleRe.FindStringSubmatch(line)
+			if matches != nil {
+				moduleName := matches[1]
+				lines[i] = fmt.Sprintf("  source  = \"registry.terraform.example.com/org/%s/google\"\n  version = \"%s\"", moduleName, versionConstraint)
+			}
+		}
+		content = strings.Join(lines, "\n")
+	}
+	if moduleBlockRe.MatchString(content) {
+		content = moduleBlockRe.ReplaceAllString(content, `$1version = ""`+versionConstraint+`"$2`)
+	} else if moduleSourceRe.MatchString(content) {
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			if moduleSourceRe.MatchString(line) {
+				lines[i] = line + "\n  version = \"" + versionConstraint + "\""
+			}
+		}
+		content = strings.Join(lines, "\n")
+	}
+	return content
+}
+
+func createPR(repoName, branchName string) (string, error) {
+	repoDir := filepath.Base(repoName)
+	if err := os.Chdir(repoDir); err != nil {
+		return "", err
+	}
+	cmds := [][]string{
+		{"git", "checkout", "-b", branchName},
+		{"git", "add", "."},
+		{"git", "commit", "-m", "Update Terraform module version constraints"},
+		{"git", "push", "--set-upstream", "origin", branchName},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return "", err
+		}
+	}
+	prURL := fmt.Sprintf("https://github.com/your-org/%s/compare/main...%s", repoName, branchName)
+	return prURL, nil
+}
+
 func (m model) View() string {
+	if m.quitting {
+		return "👋 Exiting...\n"
+	}
 	s := boldStyle.Render("Terraform Module Migrator 🐸") + "\n"
 	s += normalStyle.Render("Step: ") + highlightStyle.Render(stepTitles[m.step]) + "\n\n"
-
 	switch m.step {
 	case selectMode:
 		s += "Choose mode:\n"
@@ -132,6 +282,10 @@ func (m model) View() string {
 		s += "Running tasks...\n"
 		s += m.animatedFrames[m.frame] + "\n"
 	case done:
+		if m.error != "" {
+			s += "❌ Error: " + m.error + "\n"
+			return s + "\nPress q or Ctrl+C to quit."
+		}
 		s += "✅ Done! PR has been created.\n"
 		s += "🎉 Repo: " + m.repo + "\n"
 		s += "🚀 Mode: " + m.mode + "\n"
@@ -139,13 +293,13 @@ func (m model) View() string {
 			s += "📌 Version: " + m.version + "\n"
 		}
 	}
-
-	return s + "\n(Press Ctrl+C to exit)"
+	s += "\nPress q or Ctrl+C to quit."
+	return s
 }
 
 func main() {
 	p := tea.NewProgram(initialModel())
-	if err := p.Start(); err != nil {
+	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
