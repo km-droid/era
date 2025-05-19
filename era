@@ -1,364 +1,83 @@
-// Bubbletea-powered Terraform Module Migrator (Wizard Style)
-package main
+Suppose you have:
 
-import (
-	"fmt"
-	"io/ioutil"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"sync"
-	"time"
+Bucket: my-bucket
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	textinput "github.com/charmbracelet/bubbles/textinput"
-)
+"Folders":
 
-var (
-	gitModuleRe      = regexp.MustCompile(`(?m)source\s*=\s*\"git::https://github.com/[^/]+/modules\.git//([^"?]+)(\?ref=[^\"]+)?\"`)
-	moduleSourceRe   = regexp.MustCompile(`(?m)source\s*=\s*\"registry\.terraform\.example\.com/org/([^/]+)/google\"`)
-	moduleBlockRe    = regexp.MustCompile(`(?ms)(module\s+\"[^\"]+\"\s*\{[^}]*?source\s*=\s*\"registry\.terraform\.example\.com/org/[^\"]+/google\"[^}]*?)version\s*=\s*\"[^\"]+\"([^}]*?})`)
-	stepTitles       = []string{"Select Mode", "Enter Repo Name", "Enter Version (if updating)", "Running Migration", "Done"}
-	highlightStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	normalStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	boldStyle        = lipgloss.NewStyle().Bold(true)
-)
+team-a/
 
-type step int
+team-b/
 
-const (
-	selectMode step = iota
-	enterRepo
-	enterVersion
-	runTasks
-	done
-)
+team-c/
 
-type model struct {
-	logsVisible    bool
-	step           step
-	mode           string
-	repo           string
-	version        string
-	repoInput      textinput.Model
-	versionInput   textinput.Model
-	error          string
-	done           bool
-	animatedFrames []string
-	frame          int
-	quitting       bool
-	logs           []string // added for real-time logs
+You want:
+
+sa-team-a@project.iam.gserviceaccount.com to access only objects in team-a/
+
+sa-team-b@project.iam.gserviceaccount.com to access only team-b/, and so on.
+
+
+provider "google" {
+  project = "my-project"
+  region  = "us-central1"
 }
 
-func initialModel() model {
-	border := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).Padding(0, 1).BorderForeground(lipgloss.Color("63"))
-	repoInput := textinput.New()
-	repoInput.Prompt = "→ "
-	repoInput.PromptStyle = border
-	repoInput.TextStyle = border
-	repoInput.Placeholder = "example-repo"
-	repoInput.Focus()
-	repoInput.CharLimit = 64
-	repoInput.Width = 40
+resource "google_storage_bucket_iam_binding" "team_a_viewer" {
+  bucket = "my-bucket"
+  role   = "roles/storage.objectViewer"
 
-	versionInput := textinput.New()
-	versionInput.Prompt = "→ "
-	versionInput.PromptStyle = border
-	versionInput.TextStyle = border
-	versionInput.Placeholder = "e.g. 2.0"
-	versionInput.CharLimit = 16
-	versionInput.Width = 20
+  condition {
+    title       = "TeamAFolderOnly"
+    description = "Allow access only to team-a folder"
+    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-a/')"
+  }
 
-	return model{
-		step:           selectMode,
-		repoInput:      repoInput,
-		versionInput:   versionInput,
-		animatedFrames: []string{"[   ]", "[=  ]", "[== ]", "[===]", "[ ==]", "[  =]"},
-		quitting:       false,
-	}
+  members = [
+    "serviceAccount:sa-team-a@my-project.iam.gserviceaccount.com",
+  ]
 }
 
-func (m model) Init() tea.Cmd {
-	return tea.Batch(tea.EnterAltScreen, tick())
+resource "google_storage_bucket_iam_binding" "team_a_writer" {
+  bucket = "my-bucket"
+  role   = "roles/storage.objectCreator"
+
+  condition {
+    title       = "TeamAFolderWrite"
+    description = "Allow write access only to team-a folder"
+    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-a/')"
+  }
+
+  members = [
+    "serviceAccount:sa-team-a@my-project.iam.gserviceaccount.com",
+  ]
 }
 
-func tick() tea.Cmd {
-	return tea.Tick(time.Millisecond*120, func(t time.Time) tea.Msg {
-		return tickMsg{}
-	})
+resource "google_storage_bucket_iam_binding" "team_b_viewer" {
+  bucket = "my-bucket"
+  role   = "roles/storage.objectViewer"
+
+  condition {
+    title       = "TeamBFolderOnly"
+    description = "Allow access only to team-b folder"
+    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-b/')"
+  }
+
+  members = [
+    "serviceAccount:sa-team-b@my-project.iam.gserviceaccount.com",
+  ]
 }
 
-type tickMsg struct{}
-type doneMsg struct{}
-type errMsg struct{ err error }
+resource "google_storage_bucket_iam_binding" "team_b_writer" {
+  bucket = "my-bucket"
+  role   = "roles/storage.objectCreator"
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			m.quitting = true
-			return m, tea.Quit
-		case "v":
-			m.logsVisible = !m.logsVisible
-		}
-		switch m.step {
-		case selectMode:
-			switch msg.String() {
-			case "1":
-				m.mode = "migrate"
-				m.step = enterRepo
-			case "2":
-				m.mode = "update"
-				m.step = enterRepo
-			}
-		case enterRepo:
-			var cmd tea.Cmd
-			m.repoInput, cmd = m.repoInput.Update(msg)
-			if msg.Type == tea.KeyEnter && m.repoInput.Value() != "" {
-				m.repo = m.repoInput.Value()
-				if m.mode == "update" {
-					m.step = enterVersion
-				} else {
-					m.step = runTasks
-					return m, runMigration(m)
-				}
-			}
-			return m, cmd
-		case enterVersion:
-			var cmd tea.Cmd
-			m.versionInput, cmd = m.versionInput.Update(msg)
-			if msg.Type == tea.KeyEnter && m.versionInput.Value() != "" {
-				m.version = m.versionInput.Value()
-				m.step = runTasks
-				return m, runMigration(m)
-			}
-			return m, cmd
-		}
-	case tickMsg:
-		if m.step == runTasks && !m.done {
-			m.frame = (m.frame + 1) % len(m.animatedFrames)
-			return m, tick()
-		}
-	case doneMsg:
-		m.step = done
-		m.done = true
-	case errMsg:
-		m.error = msg.err.Error()
-		m.step = done
-	}
-	return m, nil
-}
+  condition {
+    title       = "TeamBFolderWrite"
+    description = "Allow write access only to team-b folder"
+    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-b/')"
+  }
 
-func runMigration(m model) tea.Cmd {
-	return func() tea.Msg {
-		branch := "migrate-to-jfrog"
-		if m.mode == "update" {
-			branch = "update-jfrog-version"
-		}
-		if err := cloneRepo(m.repo); err != nil {
-			return errMsg{err}
-		}
-		repoPath := filepath.Join(".", filepath.Base(m.repo))
-		versionConstraint := "~> 1.0"
-		if m.version != "" {
-			versionConstraint = "~> " + m.version
-		}
-		tfFiles, err := collectTfFiles(repoPath)
-		if err != nil {
-			return errMsg{err}
-		}
-		for _, path := range tfFiles {
-			input, err := ioutil.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			content := string(input)
-			updated := transformModule(content, versionConstraint)
-			if updated != content {
-				ioutil.WriteFile(path, []byte(updated), 0644)
-				fmt.Println("✔ Updated:", path)
-			}
-		}
-		if _, err := createPR(m.repo, branch); err != nil {
-			return errMsg{err}
-		}
-		prURL, _ := createPR(m.repo, branch)
-		_ = exec.Command("open", prURL).Start()
-		return doneMsg{}
-	}
-}
-	
-
-func cloneRepo(repoName string) error {
-	repoURL := fmt.Sprintf("git@github.com:your-org/%s.git", repoName)
-	repoDir := filepath.Base(repoName)
-	if _, err := os.Stat(repoDir); err == nil {
-		if err := os.RemoveAll(repoDir); err != nil {
-			return fmt.Errorf("failed to clean up existing directory %s: %w", repoDir, err)
-		}
-	}
-	cmd := exec.Command("git", "clone", repoURL)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
-}
-
-func collectTfFiles(repoPath string) ([]string, error) {
-	var tfFiles []string
-	err := filepath.WalkDir(repoPath, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".tf") {
-			tfFiles = append(tfFiles, path)
-		}
-		return nil
-	})
-	return tfFiles, err
-}
-
-func updateModulesConcurrently(repoPath string, versionConstraint string) error {
-	tfFiles, err := collectTfFiles(repoPath)
-	if err != nil {
-		return err
-	}
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
-	for _, path := range tfFiles {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(p string) {
-			defer func() { <-sem }()
-			processFile(p, versionConstraint, &wg)
-		}(path)
-	}
-	wg.Wait()
-	return nil
-}
-
-func processFile(path string, versionConstraint string, wg *sync.WaitGroup) {
-	defer wg.Done()
-	input, err := ioutil.ReadFile(path)
-	if err != nil {
-		return
-	}
-	content := string(input)
-	updated := transformModule(content, versionConstraint)
-	if updated != content {
-		ioutil.WriteFile(path, []byte(updated), 0644)
-	}
-}
-
-func transformModule(content, versionConstraint string) string {
-	lines := strings.Split(content, "\n")
-	for i := 0; i < len(lines); i++ {
-		if matches := gitModuleRe.FindStringSubmatch(lines[i]); matches != nil {
-			moduleName := matches[1]
-			lines[i] = fmt.Sprintf("  source  = \"registry.terraform.example.com/org/%s/google\"", moduleName)
-			for j := i + 1; j < len(lines); j++ {
-				if strings.TrimSpace(lines[j]) == "}" {
-					lines = append(lines[:j], append([]string{fmt.Sprintf("  version = \"%s\"", versionConstraint)}, lines[j:]...)...)
-					break
-				}
-			}
-			break
-		}
-	}
-	content = strings.Join(lines, "\n")
-	if moduleBlockRe.MatchString(content) {
-		content = moduleBlockRe.ReplaceAllString(content, `$1version = ""`+versionConstraint+`"$2`)
-	} else if moduleSourceRe.MatchString(content) {
-		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			if moduleSourceRe.MatchString(line) {
-				for j := i + 1; j < len(lines); j++ {
-					if strings.TrimSpace(lines[j]) == "}" {
-						lines = append(lines[:j], append([]string{fmt.Sprintf("  version = \"%s\"", versionConstraint)}, lines[j:]...)...)
-						break
-					}
-				}
-				break
-			}
-		}
-		content = strings.Join(lines, "\n")
-	}
-	return content
-}
-
-func createPR(repoName, branchName string) (string, error) {
-	repoDir := filepath.Base(repoName)
-	if err := os.Chdir(repoDir); err != nil {
-		return "", err
-	}
-	cmds := [][]string{
-		{"git", "checkout", "-b", branchName},
-		{"git", "add", "."},
-		{"git", "commit", "-m", "Update Terraform module version constraints"},
-		{"git", "push", "--set-upstream", "origin", branchName},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if err := cmd.Run(); err != nil {
-			return "", err
-		}
-	}
-	prURL := fmt.Sprintf("https://github.com/your-org/%s/compare/main...%s", repoName, branchName)
-	return prURL, nil
-}
-
-func (m model) View() string {
-	if m.quitting {
-		return "👋 Exiting..."
-	}
-
-	s := boldStyle.Render("Terraform Module Migrator 🐸") + ""
-	s += normalStyle.Render("Step: ") + highlightStyle.Render(stepTitles[m.step]) + ""
-
-	switch m.step {
-	case selectMode:
-		s += "Choose mode:"
-		s += "  1. Migrate Git modules to JFrog"
-		s += "  2. Update existing JFrog module versions"
-	case enterRepo:
-		s += "Enter GitHub repo name:" + m.repoInput.View() + ""
-	case enterVersion:
-		s += "Enter version constraint:" + m.versionInput.View() + ""
-	case runTasks:
-		s += "Running tasks..."
-		s += lipgloss.NewStyle().Foreground(lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)).Render(m.animatedFrames[m.frame]) + ""
-		if m.logsVisible {
-			s += "" + boldStyle.Render("Logs:") + ""
-			for _, log := range m.logs {
-				s += lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(log) + ""
-			}
-		}
-	case done:
-		if m.error != "" {
-			s += "❌ Error: " + m.error + ""
-			return s + "Press q or Ctrl+C to quit."
-		}
-		s += "✅ Done! PR has been created."
-		s += "🎉 Repo: " + m.repo + ""
-		s += "🚀 Mode: " + m.mode + ""
-		if m.mode == "update" {
-			s += "📌 Version: " + m.version + ""
-		}
-	}
-
-	s += "Press q or Ctrl+C to quit. Press 'v' to toggle logs."
-	return s
-}
-
-func main() {
-	p := tea.NewProgram(initialModel())
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
+  members = [
+    "serviceAccount:sa-team-b@my-project.iam.gserviceaccount.com",
+  ]
 }
