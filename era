@@ -1,83 +1,28 @@
-Suppose you have:
+name: Build CUPS Image (Manual)
 
-Bucket: my-bucket
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Environment (dev or prod)"
+        required: true
+        default: dev
 
-"Folders":
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-team-a/
+    steps:
+    - uses: actions/checkout@v3
 
-team-b/
+    - name: Set timestamped image tag
+      run: echo "IMAGE_TAG=my-cups-${{ github.event.inputs.env }}:$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
 
-team-c/
+    - name: Build Docker image
+      run: |
+        docker build \
+          --build-arg ENV=${{ github.event.inputs.env }} \
+          -t $IMAGE_TAG .
 
-You want:
-
-sa-team-a@project.iam.gserviceaccount.com to access only objects in team-a/
-
-sa-team-b@project.iam.gserviceaccount.com to access only team-b/, and so on.
-
-
-provider "google" {
-  project = "my-project"
-  region  = "us-central1"
-}
-
-resource "google_storage_bucket_iam_binding" "team_a_viewer" {
-  bucket = "my-bucket"
-  role   = "roles/storage.objectViewer"
-
-  condition {
-    title       = "TeamAFolderOnly"
-    description = "Allow access only to team-a folder"
-    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-a/')"
-  }
-
-  members = [
-    "serviceAccount:sa-team-a@my-project.iam.gserviceaccount.com",
-  ]
-}
-
-resource "google_storage_bucket_iam_binding" "team_a_writer" {
-  bucket = "my-bucket"
-  role   = "roles/storage.objectCreator"
-
-  condition {
-    title       = "TeamAFolderWrite"
-    description = "Allow write access only to team-a folder"
-    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-a/')"
-  }
-
-  members = [
-    "serviceAccount:sa-team-a@my-project.iam.gserviceaccount.com",
-  ]
-}
-
-resource "google_storage_bucket_iam_binding" "team_b_viewer" {
-  bucket = "my-bucket"
-  role   = "roles/storage.objectViewer"
-
-  condition {
-    title       = "TeamBFolderOnly"
-    description = "Allow access only to team-b folder"
-    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-b/')"
-  }
-
-  members = [
-    "serviceAccount:sa-team-b@my-project.iam.gserviceaccount.com",
-  ]
-}
-
-resource "google_storage_bucket_iam_binding" "team_b_writer" {
-  bucket = "my-bucket"
-  role   = "roles/storage.objectCreator"
-
-  condition {
-    title       = "TeamBFolderWrite"
-    description = "Allow write access only to team-b folder"
-    expression  = "resource.name.startsWith('projects/_/buckets/my-bucket/objects/team-b/')"
-  }
-
-  members = [
-    "serviceAccount:sa-team-b@my-project.iam.gserviceaccount.com",
-  ]
-}
+    - name: Print image name
+      run: echo "Built image: $IMAGE_TAG"
