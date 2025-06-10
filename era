@@ -1,28 +1,104 @@
-name: Build CUPS Image (Manual)
+package main
 
-on:
-  workflow_dispatch:
-    inputs:
-      env:
-        description: "Environment (dev or prod)"
-        required: true
-        default: dev
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+	"golang.org/x/oauth2/google"
+)
 
-    steps:
-    - uses: actions/checkout@v3
+const baseURL = "https://gdchardwaremanagement.googleapis.com/v1alpha"
 
-    - name: Set timestamped image tag
-      run: echo "IMAGE_TAG=my-cups-${{ github.event.inputs.env }}:$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+type Zone struct {
+	Name string `json:"name"`
+}
 
-    - name: Build Docker image
-      run: |
-        docker build \
-          --build-arg ENV=${{ github.event.inputs.env }} \
-          -t $IMAGE_TAG .
+type ListZonesResponse struct {
+	Zones []Zone `json:"zones"`
+}
 
-    - name: Print image name
-      run: echo "Built image: $IMAGE_TAG"
+func getAuthorizedClient(ctx context.Context) (*http.Client, error) {
+	scopes := []string{"https://www.googleapis.com/auth/cloud-platform"}
+	creds, err := google.FindDefaultCredentials(ctx, scopes...)
+	if err != nil {
+		return nil, err
+	}
+	return oauth2.NewClient(ctx, creds.TokenSource), nil
+}
+
+func listZones(ctx context.Context, client *http.Client, projectID, location string) ([]string, error) {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/zones", baseURL, projectID, location)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var listResp ListZonesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, err
+	}
+
+	var zoneIDs []string
+	for _, z := range listResp.Zones {
+		parts := strings.Split(z.Name, "/")
+		zoneIDs = append(zoneIDs, parts[len(parts)-1])
+	}
+	return zoneIDs, nil
+}
+
+func getNextAvailableZoneID(ctx context.Context, projectID, location, inputZone string) (string, error) {
+	client, err := getAuthorizedClient(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	existingZones, err := listZones(ctx, client, projectID, location)
+	if err != nil {
+		return "", err
+	}
+
+	exists := make(map[string]bool)
+	for _, z := range existingZones {
+		exists[z] = true
+	}
+
+	re := regexp.MustCompile(`^(.*?)-zone(\d+)$`)
+	matches := re.FindStringSubmatch(inputZone)
+	if len(matches) != 3 {
+		return "", fmt.Errorf("invalid zone format: %s", inputZone)
+	}
+
+	base := matches[1]
+	num, _ := strconv.Atoi(matches[2])
+
+	for {
+		candidate := fmt.Sprintf("%s-zone%d", base, num)
+		if !exists[candidate] {
+			return candidate, nil
+		}
+		num++
+	}
+}
+
+func main() {
+	ctx := context.Background()
+	projectID := "your-project-id"
+	location := "us-central1"
+	inputZone := "dallas-zone1"
+
+	nextZone, err := getNextAvailableZoneID(ctx, projectID, location, inputZone)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Next available zone ID: %s\n", nextZone)
+}
