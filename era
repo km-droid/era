@@ -1,104 +1,98 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
-	"regexp"
-	"strconv"
-	"strings"
 
+	"github.com/sirupsen/logrus"
 	"golang.org/x/oauth2/google"
 )
 
-const baseURL = "https://gdchardwaremanagement.googleapis.com/v1alpha"
+var (
+	logger    = logrus.New()
+	projectID = os.Getenv("GCP_PROJECT") // Must be set
+	location  = "us-east1"               // Default location
+)
 
-type Zone struct {
-	Name string `json:"name"`
-}
-
-type ListZonesResponse struct {
-	Zones []Zone `json:"zones"`
-}
-
-func getAuthorizedClient(ctx context.Context) (*http.Client, error) {
-	scopes := []string{"https://www.googleapis.com/auth/cloud-platform"}
-	creds, err := google.FindDefaultCredentials(ctx, scopes...)
-	if err != nil {
-		return nil, err
-	}
-	return oauth2.NewClient(ctx, creds.TokenSource), nil
-}
-
-func listZones(ctx context.Context, client *http.Client, projectID, location string) ([]string, error) {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/zones", baseURL, projectID, location)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var listResp ListZonesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-		return nil, err
-	}
-
-	var zoneIDs []string
-	for _, z := range listResp.Zones {
-		parts := strings.Split(z.Name, "/")
-		zoneIDs = append(zoneIDs, parts[len(parts)-1])
-	}
-	return zoneIDs, nil
-}
-
-func getNextAvailableZoneID(ctx context.Context, projectID, location, inputZone string) (string, error) {
-	client, err := getAuthorizedClient(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	existingZones, err := listZones(ctx, client, projectID, location)
-	if err != nil {
-		return "", err
-	}
-
-	exists := make(map[string]bool)
-	for _, z := range existingZones {
-		exists[z] = true
-	}
-
-	re := regexp.MustCompile(`^(.*?)-zone(\d+)$`)
-	matches := re.FindStringSubmatch(inputZone)
-	if len(matches) != 3 {
-		return "", fmt.Errorf("invalid zone format: %s", inputZone)
-	}
-
-	base := matches[1]
-	num, _ := strconv.Atoi(matches[2])
-
-	for {
-		candidate := fmt.Sprintf("%s-zone%d", base, num)
-		if !exists[candidate] {
-			return candidate, nil
-		}
-		num++
-	}
+func init() {
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	logger.SetOutput(os.Stdout)
+	logger.SetLevel(logrus.InfoLevel)
 }
 
 func main() {
 	ctx := context.Background()
-	projectID := "your-project-id"
-	location := "us-central1"
-	inputZone := "dallas-zone1"
 
-	nextZone, err := getNextAvailableZoneID(ctx, projectID, location, inputZone)
+	file, err := os.Open("zones.csv")
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		logger.WithError(err).Fatal("Failed to open zones.csv")
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	headers, err := reader.Read()
+	if err != nil {
+		logger.WithError(err).Fatal("Failed to read CSV headers")
 	}
 
-	fmt.Printf("Next available zone ID: %s\n", nextZone)
+	// Validate headers
+	expected := []string{"zone_name", "env", "owner", "region"}
+	for i, h := range expected {
+		if headers[i] != h {
+			logger.Fatalf("Expected header '%s' at position %d, got '%s'", h, i, headers[i])
+		}
+	}
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			logger.WithError(err).Warn("Failed to read record")
+			continue
+		}
+
+		zoneName := record[0]
+		labels := map[string]string{
+			"env":    record[1],
+			"owner":  record[2],
+			"region": record[3],
+		}
+
+		fullZonePath := fmt.Sprintf("projects/%s/locations/%s/zones/%s", projectID, location, zoneName)
+
+		if err := patchZoneLabels(ctx, fullZonePath, labels); err != nil {
+			logger.WithField("zone", zoneName).WithError(err).Error("Failed to patch zone")
+		} else {
+			logger.WithField("zone", zoneName).Info("Successfully updated zone labels")
+		}
+	}
 }
+
+func patchZoneLabels(ctx context.Context, zoneName string, labels map[string]string) error {
+	tokenSource, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		return fmt.Errorf("failed to get token source: %v", err)
+	}
+
+	client := oauth2.NewClient(ctx, tokenSource)
+	url := fmt.Sprintf("https://gdchardwaremanagement.googleapis.com/v1alpha/%s?updateMask=labels", zoneName)
+
+	payload := map[string]interface{}{
+		"labels": labels,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("PATCH", url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil
