@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
+	"net/http"
 	"os"
-	"strings"
 
-	container "cloud.google.com/go/container/apiv1"
-	containerpb "google.golang.org/genproto/googleapis/container/v1"
+	"golang.org/x/oauth2/google"
 )
 
 type ClusterInfo struct {
@@ -23,52 +22,75 @@ type ClusterInfo struct {
 func main() {
 	ctx := context.Background()
 
-	client, err := container.NewClusterManagerClient(ctx)
+	// Use ADC or service account for auth
+	client, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
-		log.Fatalf("failed to create GKE client: %v", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed to get default client: %v\n", err)
+		os.Exit(1)
 	}
-	defer client.Close()
 
 	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
 	if projectID == "" {
-		log.Fatalf("GOOGLE_CLOUD_PROJECT env var not set")
+		fmt.Fprintln(os.Stderr, "❌ GOOGLE_CLOUD_PROJECT not set")
+		os.Exit(1)
 	}
 
-	req := &containerpb.ListClustersRequest{
-		Parent: fmt.Sprintf("projects/%s/locations/-", projectID),
-	}
+	url := fmt.Sprintf("https://gdchardwaremanagement.googleapis.com/v1alpha/projects/%s/locations/-/zones", projectID)
 
-	resp, err := client.ListClusters(ctx, req)
+	resp, err := client.Get(url)
 	if err != nil {
-		log.Fatalf("failed to list clusters: %v", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed to call GDCE API: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "❌ API error: %s\n%s\n", resp.Status, string(body))
+		os.Exit(1)
+	}
+
+	var result struct {
+		Zones []struct {
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels"`
+		} `json:"zones"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Failed to parse JSON: %v\n", err)
+		os.Exit(1)
 	}
 
 	var clusters []ClusterInfo
-	for _, c := range resp.Clusters {
-		labels := c.ResourceLabels
+	for _, zone := range result.Zones {
+		name := zone.Name
+		lastPart := name[strings.LastIndex(name, "/")+1:] // extract zone ID as cluster_name
 
 		cluster := ClusterInfo{
-			Field:     "$" + c.Name,
-			Location:  labels["location"],
-			StoreNo:   labels["storeno"],
-			Latitude:  labels["latitude"],
-			Longitude: labels["longitude"],
+			Field:     "$" + lastPart,
+			Location:  zone.Labels["location"],
+			StoreNo:   zone.Labels["storeno"],
+			Latitude:  zone.Labels["latitude"],
+			Longitude: zone.Labels["longitude"],
 		}
 		clusters = append(clusters, cluster)
 	}
 
-	outFile := "clusters.json"
-	file, err := os.Create(outFile)
+	// Write to output JSON
+	file, err := os.Create("gdce_zones.json")
 	if err != nil {
-		log.Fatalf("failed to create output file: %v", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed to create output file: %v\n", err)
+		os.Exit(1)
 	}
 	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(clusters); err != nil {
-		log.Fatalf("failed to encode JSON: %v", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed to write JSON: %v\n", err)
+		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Cluster info written to %s\n", outFile)
+	fmt.Println("✅ GDCE zone data written to gdce_zones.json")
 }
+
