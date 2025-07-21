@@ -7,11 +7,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"golang.org/x/oauth2/google"
 )
 
-type ClusterInfo struct {
+type ClusterSummary struct {
 	Field     string `json:"Field"`
 	Location  string `json:"location"`
 	StoreNo   string `json:"storeno"`
@@ -22,7 +23,7 @@ type ClusterInfo struct {
 func main() {
 	ctx := context.Background()
 
-	// Use ADC or service account for auth
+	// Auth using ADC
 	client, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to get default client: %v\n", err)
@@ -31,66 +32,74 @@ func main() {
 
 	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
 	if projectID == "" {
-		fmt.Fprintln(os.Stderr, "❌ GOOGLE_CLOUD_PROJECT not set")
+		fmt.Fprintln(os.Stderr, "❌ GOOGLE_CLOUD_PROJECT env var not set")
 		os.Exit(1)
 	}
 
-	url := fmt.Sprintf("https://gdchardwaremanagement.googleapis.com/v1alpha/projects/%s/locations/-/zones", projectID)
-
+	// Fetch clusters
+	url := fmt.Sprintf("https://edgecontainer.googleapis.com/v1/projects/%s/locations/-/clusters", projectID)
 	resp, err := client.Get(url)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to call GDCE API: %v\n", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed to fetch clusters: %v\n", err)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		fmt.Fprintf(os.Stderr, "❌ API error: %s\n%s\n", resp.Status, string(body))
+		fmt.Fprintf(os.Stderr, "❌ API error %s:\n%s\n", resp.Status, string(body))
 		os.Exit(1)
 	}
 
 	var result struct {
-		Zones []struct {
-			Name   string            `json:"name"`
-			Labels map[string]string `json:"labels"`
-		} `json:"zones"`
+		Clusters []map[string]interface{} `json:"clusters"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to parse JSON: %v\n", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed to parse response: %v\n", err)
 		os.Exit(1)
 	}
 
-	var clusters []ClusterInfo
-	for _, zone := range result.Zones {
-		name := zone.Name
-		lastPart := name[strings.LastIndex(name, "/")+1:] // extract zone ID as cluster_name
-
-		cluster := ClusterInfo{
-			Field:     "$" + lastPart,
-			Location:  zone.Labels["location"],
-			StoreNo:   zone.Labels["storeno"],
-			Latitude:  zone.Labels["latitude"],
-			Longitude: zone.Labels["longitude"],
-		}
-		clusters = append(clusters, cluster)
-	}
-
-	// Write to output JSON
-	file, err := os.Create("gdce_zones.json")
+	// Write full cluster details
+	fullFile, err := os.Create("gdce_full_clusters.json")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to create output file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed to create full JSON file: %v\n", err)
 		os.Exit(1)
 	}
-	defer file.Close()
+	defer fullFile.Close()
+	json.NewEncoder(fullFile).Encode(result.Clusters)
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(clusters); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to write JSON: %v\n", err)
-		os.Exit(1)
+	// Build summary
+	var summaries []ClusterSummary
+	for _, c := range result.Clusters {
+		name, _ := c["name"].(string)
+		labels, _ := c["labels"].(map[string]interface{})
+		summary := ClusterSummary{
+			Field:     "$" + name[strings.LastIndex(name, "/")+1:],
+			Location:  toString(labels["location"]),
+			StoreNo:   toString(labels["storeno"]),
+			Latitude:  toString(labels["latitude"]),
+			Longitude: toString(labels["longitude"]),
+		}
+		summaries = append(summaries, summary)
 	}
 
-	fmt.Println("✅ GDCE zone data written to gdce_zones.json")
+	// Write summary file
+	summaryFile, err := os.Create("gdce_cluster_summary.json")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Failed to create summary JSON file: %v\n", err)
+		os.Exit(1)
+	}
+	defer summaryFile.Close()
+	json.NewEncoder(summaryFile).Encode(summaries)
+
+	fmt.Println("✅ Output written:")
+	fmt.Println(" - gdce_full_clusters.json")
+	fmt.Println(" - gdce_cluster_summary.json")
 }
 
+func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", v)
+}
