@@ -1,98 +1,74 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"net/http"
+	"log"
 	"os"
+	"strings"
 
-	"github.com/sirupsen/logrus"
-	"golang.org/x/oauth2/google"
+	container "cloud.google.com/go/container/apiv1"
+	containerpb "google.golang.org/genproto/googleapis/container/v1"
 )
 
-var (
-	logger    = logrus.New()
-	projectID = os.Getenv("GCP_PROJECT") // Must be set
-	location  = "us-east1"               // Default location
-)
-
-func init() {
-	logger.SetFormatter(&logrus.JSONFormatter{})
-	logger.SetOutput(os.Stdout)
-	logger.SetLevel(logrus.InfoLevel)
+type ClusterInfo struct {
+	Field     string `json:"Field"`
+	Location  string `json:"location"`
+	StoreNo   string `json:"storeno"`
+	Latitude  string `json:"latitude"`
+	Longitude string `json:"langitude"`
 }
 
 func main() {
 	ctx := context.Background()
 
-	file, err := os.Open("zones.csv")
+	client, err := container.NewClusterManagerClient(ctx)
 	if err != nil {
-		logger.WithError(err).Fatal("Failed to open zones.csv")
+		log.Fatalf("failed to create GKE client: %v", err)
+	}
+	defer client.Close()
+
+	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if projectID == "" {
+		log.Fatalf("GOOGLE_CLOUD_PROJECT env var not set")
+	}
+
+	req := &containerpb.ListClustersRequest{
+		Parent: fmt.Sprintf("projects/%s/locations/-", projectID),
+	}
+
+	resp, err := client.ListClusters(ctx, req)
+	if err != nil {
+		log.Fatalf("failed to list clusters: %v", err)
+	}
+
+	var clusters []ClusterInfo
+	for _, c := range resp.Clusters {
+		labels := c.ResourceLabels
+
+		cluster := ClusterInfo{
+			Field:     "$" + c.Name,
+			Location:  labels["location"],
+			StoreNo:   labels["storeno"],
+			Latitude:  labels["latitude"],
+			Longitude: labels["longitude"],
+		}
+		clusters = append(clusters, cluster)
+	}
+
+	outFile := "clusters.json"
+	file, err := os.Create(outFile)
+	if err != nil {
+		log.Fatalf("failed to create output file: %v", err)
 	}
 	defer file.Close()
 
-	reader := csv.NewReader(file)
-	headers, err := reader.Read()
-	if err != nil {
-		logger.WithError(err).Fatal("Failed to read CSV headers")
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(clusters); err != nil {
+		log.Fatalf("failed to encode JSON: %v", err)
 	}
 
-	// Validate headers
-	expected := []string{"zone_name", "env", "owner", "region"}
-	for i, h := range expected {
-		if headers[i] != h {
-			logger.Fatalf("Expected header '%s' at position %d, got '%s'", h, i, headers[i])
-		}
-	}
-
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			logger.WithError(err).Warn("Failed to read record")
-			continue
-		}
-
-		zoneName := record[0]
-		labels := map[string]string{
-			"env":    record[1],
-			"owner":  record[2],
-			"region": record[3],
-		}
-
-		fullZonePath := fmt.Sprintf("projects/%s/locations/%s/zones/%s", projectID, location, zoneName)
-
-		if err := patchZoneLabels(ctx, fullZonePath, labels); err != nil {
-			logger.WithField("zone", zoneName).WithError(err).Error("Failed to patch zone")
-		} else {
-			logger.WithField("zone", zoneName).Info("Successfully updated zone labels")
-		}
-	}
+	fmt.Printf("✅ Cluster info written to %s\n", outFile)
 }
-
-func patchZoneLabels(ctx context.Context, zoneName string, labels map[string]string) error {
-	tokenSource, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
-	if err != nil {
-		return fmt.Errorf("failed to get token source: %v", err)
-	}
-
-	client := oauth2.NewClient(ctx, tokenSource)
-	url := fmt.Sprintf("https://gdchardwaremanagement.googleapis.com/v1alpha/%s?updateMask=labels", zoneName)
-
-	payload := map[string]interface{}{
-		"labels": labels,
-	}
-	body, _ := json.Marshal(payload)
-
-	req, _ := http.NewRequest("PATCH", url, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil
