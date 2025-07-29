@@ -1,105 +1,87 @@
+
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"strings"
+	"time"
 
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
-type ClusterSummary struct {
-	Field     string `json:"Field"`
-	Location  string `json:"location"`
-	StoreNo   string `json:"storeno"`
-	Latitude  string `json:"latitude"`
-	Longitude string `json:"langitude"`
+// API base URL
+const baseURL = "https://gdchardwaremanagement.googleapis.com/v1alpha"
+
+type Order struct {
+	FulfillmentTime string `json:"fulfillmentTime,omitempty"`
+}
+
+func getAuthorizedClient(ctx context.Context) (*http.Client, error) {
+	scopes := []string{"https://www.googleapis.com/auth/cloud-platform"}
+	creds, err := google.FindDefaultCredentials(ctx, scopes...)
+	if err != nil {
+		return nil, err
+	}
+	return oauth2.NewClient(ctx, creds.TokenSource), nil
+}
+
+// updateOrderFulfillmentTime updates the fulfillmentTime field of an order
+func updateOrderFulfillmentTime(ctx context.Context, client *http.Client, projectID, location, orderID, fulfillmentTime string) error {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/orders/%s?updateMask=fulfillment_time",
+		baseURL, projectID, location, orderID)
+
+	payload := Order{
+		FulfillmentTime: fulfillmentTime,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		fmt.Printf("Successfully updated fulfillmentTime for order %s\n", orderID)
+		return nil
+	}
+
+	return fmt.Errorf("failed to update order: HTTP %d", resp.StatusCode)
 }
 
 func main() {
 	ctx := context.Background()
 
-	// Auth using ADC
-	client, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	// TODO: Replace with your values
+	projectID := "your-project-id"
+	location := "us-central1"
+	orderID := "your-order-id"
+
+	// Example: fulfillmentTime set to 2025-08-15T12:00:00Z
+	newTime := time.Date(2025, 8, 15, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+
+	client, err := getAuthorizedClient(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to get default client: %v\n", err)
+		fmt.Println("Error getting client:", err)
 		os.Exit(1)
 	}
 
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if projectID == "" {
-		fmt.Fprintln(os.Stderr, "❌ GOOGLE_CLOUD_PROJECT env var not set")
+	if err := updateOrderFulfillmentTime(ctx, client, projectID, location, orderID, newTime); err != nil {
+		fmt.Println("Error updating fulfillmentTime:", err)
 		os.Exit(1)
 	}
-
-	// Fetch clusters
-	url := fmt.Sprintf("https://edgecontainer.googleapis.com/v1/projects/%s/locations/-/clusters", projectID)
-	resp, err := client.Get(url)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to fetch clusters: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Fprintf(os.Stderr, "❌ API error %s:\n%s\n", resp.Status, string(body))
-		os.Exit(1)
-	}
-
-	var result struct {
-		Clusters []map[string]interface{} `json:"clusters"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to parse response: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Write full cluster details
-	fullFile, err := os.Create("gdce_full_clusters.json")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to create full JSON file: %v\n", err)
-		os.Exit(1)
-	}
-	defer fullFile.Close()
-	json.NewEncoder(fullFile).Encode(result.Clusters)
-
-	// Build summary
-	var summaries []ClusterSummary
-	for _, c := range result.Clusters {
-		name, _ := c["name"].(string)
-		labels, _ := c["labels"].(map[string]interface{})
-		summary := ClusterSummary{
-			Field:     "$" + name[strings.LastIndex(name, "/")+1:],
-			Location:  toString(labels["location"]),
-			StoreNo:   toString(labels["storeno"]),
-			Latitude:  toString(labels["latitude"]),
-			Longitude: toString(labels["longitude"]),
-		}
-		summaries = append(summaries, summary)
-	}
-
-	// Write summary file
-	summaryFile, err := os.Create("gdce_cluster_summary.json")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to create summary JSON file: %v\n", err)
-		os.Exit(1)
-	}
-	defer summaryFile.Close()
-	json.NewEncoder(summaryFile).Encode(summaries)
-
-	fmt.Println("✅ Output written:")
-	fmt.Println(" - gdce_full_clusters.json")
-	fmt.Println(" - gdce_cluster_summary.json")
-}
-
-func toString(v interface{}) string {
-	if v == nil {
-		return ""
-	}
-	return fmt.Sprintf("%v", v)
 }
