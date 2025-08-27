@@ -1,477 +1,422 @@
-{
-  "id": null,
-  "uid": "pubsub-top10-promql",
-  "title": "Pub/Sub Health (PromQL)",
-  "tags": ["pubsub", "promql", "sre"],
-  "schemaVersion": 38,
-  "version": 2,
-  "refresh": "30s",
-  "time": { "from": "now-6h", "to": "now" },
-  "templating": {
-    "list": [
-      {
-        "name": "dlq_sub",
-        "type": "textbox",
-        "label": "Central DLQ Subscription",
-        "query": "",
-        "current": { "text": "central-dlq-sub", "value": "central-dlq-sub" }
-      }
-    ]
-  },
-  "panels": [
-    {
-      "type": "stat",
-      "title": "Active Subscriptions",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "count(count by (subscription_id) ({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"store-[0-9]+-sub\"}))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "Unhealthy Subscriptions",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "count(count by (subscription_id) ((avg_over_time({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"store-[0-9]+-sub\"}[5m]) > 100000) or (avg_over_time({__name__=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\",subscription_id=~\"store-[0-9]+-sub\"}[1m]) > 900) or (avg_over_time(rate({__name__=\"pubsub.googleapis.com/subscription/ack_message_count\",subscription_id=~\"store-[0-9]+-sub\"}[1m])[10m:]) < 0.1) or (sum by (subscription_id)(rate({__name__=\"pubsub.googleapis.com/subscription/dead_letter_message_count\",subscription_id=~\"store-[0-9]+-sub\"}[1m])) > 0)))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "Healthy Subscriptions",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "(count(count by (subscription_id) ({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"store-[0-9]+-sub\"})) - count(count by (subscription_id) ((avg_over_time({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"store-[0-9]+-sub\"}[5m]) > 100000) or (avg_over_time({__name__=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\",subscription_id=~\"store-[0-9]+-sub\"}[1m]) > 900) or (avg_over_time(rate({__name__=\"pubsub.googleapis.com/subscription/ack_message_count\",subscription_id=~\"store-[0-9]+-sub\"}[1m])[10m:]) < 0.1) or (sum by (subscription_id)(rate({__name__=\"pubsub.googleapis.com/subscription/dead_letter_message_count\",subscription_id=~\"store-[0-9]+-sub\"}[1m])) > 0))))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "DLQ Backlog",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "avg_over_time({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"$dlq_sub\"}[1m])",
-          "refId": "A"
-        }
-      ]
-    },
+//
+monitoring/
+├─ terraform/
+│  ├─ main.tf
+│  ├─ variables.tf
+│  └─ terraform.tfvars.example
+├─ grafana/
+│  ├─ dashboards/
+│  │  └─ pubsub-top10-promql.json
+│  └─ provisioning/
+│     └─ datasources/
+│        └─ prometheus-gmp.yaml
+└─ promql/
+   └─ pubsub.promql
 
-    {
-      "type": "table",
-      "title": "Top 10 Topics by Publish Failure Rate (%)",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 4 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "topk(10, 100 * sum by (topic_id)(rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\",response_code=\"ERROR\",topic_id=~\"store-[0-9]+-topic\"}[5m])) / sum by (topic_id)(rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\",topic_id=~\"store-[0-9]+-topic\"}[5m])))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Topics by p95 Publish Latency (s)",
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 4 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "topk(10, histogram_quantile(0.95, sum by (le, topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_latency_bucket\",topic_id=~\"store-[0-9]+-topic\"}[5m]))))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Subscriptions by Backlog (messages)",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 14 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "topk(10, avg_over_time({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"store-[0-9]+-sub\"}[5m]))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Subscriptions by Oldest Message Age (s)",
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 14 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "topk(10, avg_over_time({__name__=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\",subscription_id=~\"store-[0-9]+-sub\"}[5m]))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Subscriptions by DLQ Rate (msg/s)",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 24 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "topk(10, sum by (subscription_id)(rate({__name__=\"pubsub.googleapis.com/subscription/dead_letter_message_count\",subscription_id=~\"store-[0-9]+-sub\"}[1m])))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "Quota Utilization: Topic Count (%)",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "100 * avg_over_time({__name__=\"serviceruntime.googleapis.com/quota/allocation/usage\",service=\"pubsub.googleapis.com\",quota_metric=\"pubsub.googleapis.com/topic_count\"}[5m]) / avg_over_time({__name__=\"serviceruntime.googleapis.com/quota/allocation/limit\",service=\"pubsub.googleapis.com\",quota_metric=\"pubsub.googleapis.com/topic_count\"}[5m])",
-          "refId": "A"
-        }
-      ]
-    }
-  ]
+
+/////
+
+terraform/terraform.tfvars.example
+project_id = "my-gcp-project-id"
+
+notification_channels = [
+  "channels/1234567890123",
+  "channels/9876543210987"
+]
+
+# topic_regex        = "store-[0-9]+-topic"
+# subscription_regex = "store-[0-9]+-sub"
+
+# threshold_publish_failure_pct   = 1.0
+# threshold_publish_p95_latency_s = 2.0
+# threshold_backlog               = 150000
+# threshold_oldest_age_s          = 1200
+# threshold_ack_rate_min          = 0.2
+# threshold_service_5xx_pct       = 1.0
+# threshold_quota_utilization_pct = 80.0
+
+//variables.tf
+
+variable "project_id" {
+  type        = string
+  description = "GCP project id."
 }
-///////////###################
 
-# ============================
-# Publisher metrics (topics)
-# ============================
+variable "notification_channels" {
+  type        = list(string)
+  description = "Monitoring channel resource names (e.g., channels/123...)."
+  default     = []
+}
 
-# Publish failure rate (%), per topic
-100 *
-sum by (topic_id)(
-  rate({__name__="pubsub.googleapis.com/topic/send_message_operation_count",
-        response_code="ERROR",
-        topic_id=~"store-[0-9]+-topic"}[5m])
-)
-/
-sum by (topic_id)(
-  rate({__name__="pubsub.googleapis.com/topic/send_message_operation_count",
-        topic_id=~"store-[0-9]+-topic"}[5m])
-)
+variable "topic_regex" {
+  type        = string
+  default     = "store-[0-9]+-topic"
+  description = "Regex for topics to include."
+}
 
-# p95 publish latency (s), per topic
-histogram_quantile(
-  0.95,
-  sum by (le, topic_id) (
-    rate({__name__="pubsub.googleapis.com/topic/send_message_operation_latency_bucket",
-          topic_id=~"store-[0-9]+-topic"}[5m])
-  )
-)
+variable "subscription_regex" {
+  type        = string
+  default     = "store-[0-9]+-sub"
+  description = "Regex for subscriptions to include."
+}
 
-# ============================
-# Subscriber metrics (subs)
-# ============================
+variable "threshold_publish_failure_pct" {
+  type        = number
+  default     = 1.0
+}
 
-# Backlog: avg over 5m, per subscription (messages)
-avg_over_time(
-  {__name__="pubsub.googleapis.com/subscription/num_undelivered_messages",
-   subscription_id=~"store-[0-9]+-sub"}[5m]
-)
+variable "threshold_publish_p95_latency_s" {
+  type        = number
+  default     = 2.0
+}
 
-# Oldest unacked message age: avg over 1m, per subscription (seconds)
-avg_over_time(
-  {__name__="pubsub.googleapis.com/subscription/oldest_unacked_message_age",
-   subscription_id=~"store-[0-9]+-sub"}[1m]
-)
+variable "threshold_backlog" {
+  type        = number
+  default     = 100000
+}
 
-# Ack rate: avg over last 10m of per-minute rate, per subscription (msg/s)
-avg_over_time(
-  rate({__name__="pubsub.googleapis.com/subscription/ack_message_count",
-        subscription_id=~"store-[0-9]+-sub"}[1m])[10m:]
-)
+variable "threshold_oldest_age_s" {
+  type        = number
+  default     = 900
+}
 
-# DLQ rate: per subscription (msg/s)
-sum by (subscription_id)(
-  rate({__name__="pubsub.googleapis.com/subscription/dead_letter_message_count",
-        subscription_id=~"store-[0-9]+-sub"}[1m])
-)
+variable "threshold_ack_rate_min" {
+  type        = number
+  default     = 0.1
+}
 
-# ============================
-# System & quotas
-# ============================
+variable "threshold_service_5xx_pct" {
+  type        = number
+  default     = 1.0
+}
 
-# Pub/Sub API 5xx percentage (project-wide)
-100 *
-sum(rate({__name__="serviceruntime.googleapis.com/api/request_count",
-          service="pubsub.googleapis.com",
-          response_code_class="5xx"}[1m]))
-/
-sum(rate({__name__="serviceruntime.googleapis.com/api/request_count",
-          service="pubsub.googleapis.com"}[1m]))
-
-# Quota utilization: Topic count (%)
-100 *
-avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/usage",
-               service="pubsub.googleapis.com",
-               quota_metric="pubsub.googleapis.com/topic_count"}[5m])
-/
-avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/limit",
-               service="pubsub.googleapis.com",
-               quota_metric="pubsub.googleapis.com/topic_count"}[5m])
-
-# Quota utilization: Subscription count (%)
-100 *
-avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/usage",
-               service="pubsub.googleapis.com",
-               quota_metric="pubsub.googleapis.com/subscription_count"}[5m])
-/
-avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/limit",
-               service="pubsub.googleapis.com",
-               quota_metric="pubsub.googleapis.com/subscription_count"}[5m])
-
-# Quota utilization: Message storage bytes (%)
-100 *
-avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/usage",
-               service="pubsub.googleapis.com",
-               quota_metric="pubsub.googleapis.com/message_storage_bytes"}[5m])
-/
-avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/limit",
-               service="pubsub.googleapis.com",
-               quota_metric="pubsub.googleapis.com/message_storage_bytes"}[5m])
-
-# ============================
-# Top-10 panels (Grafana)
-# ============================
-
-# Top-10 topics by publish failure rate (%)
-topk(10,
-  100 *
-  sum by (topic_id)(rate({__name__="pubsub.googleapis.com/topic/send_message_operation_count",
-                          response_code="ERROR",
-                          topic_id=~"store-[0-9]+-topic"}[5m]))
-  /
-  sum by (topic_id)(rate({__name__="pubsub.googleapis.com/topic/send_message_operation_count",
-                          topic_id=~"store-[0-9]+-topic"}[5m]))
-)
-
-# Top-10 topics by p95 publish latency (s)
-topk(10,
-  histogram_quantile(
-    0.95,
-    sum by (le, topic_id)(
-      rate({__name__="pubsub.googleapis.com/topic/send_message_operation_latency_bucket",
-            topic_id=~"store-[0-9]+-topic"}[5m])
-    )
-  )
-)
-
-# Top-10 subscriptions by backlog (messages)
-topk(10,
-  avg_over_time(
-    {__name__="pubsub.googleapis.com/subscription/num_undelivered_messages",
-     subscription_id=~"store-[0-9]+-sub"}[5m]
-  )
-)
-
-# Top-10 subscriptions by oldest message age (s)
-topk(10,
-  avg_over_time(
-    {__name__="pubsub.googleapis.com/subscription/oldest_unacked_message_age",
-     subscription_id=~"store-[0-9]+-sub"}[5m]
-  )
-)
-
-# Top-10 subscriptions by DLQ rate (msg/s)
-topk(10,
-  sum by (subscription_id)(
-    rate({__name__="pubsub.googleapis.com/subscription/dead_letter_message_count",
-          subscription_id=~"store-[0-9]+-sub"}[1m])
-  )
-)
-///////////##################
-
-{
-  "id": null,
-  "uid": "pubsub-drilldown-by-topic",
-  "title": "Pub/Sub Drilldown by Topic (PromQL)",
-  "tags": ["pubsub", "promql", "drilldown"],
-  "schemaVersion": 38,
-  "version": 1,
-  "refresh": "30s",
-  "time": { "from": "now-6h", "to": "now" },
-  "templating": {
-    "list": [
-      {
-        "name": "topic_input",
-        "type": "textbox",
-        "label": "Topic ID",
-        "query": "",
-        "current": { "text": "store-0001-topic", "value": "store-0001-topic" },
-        "description": "Enter full topic id or regex (e.g., store-0001-topic)"
-      },
-      {
-        "name": "store_base",
-        "type": "query",
-        "label": "Derived store id",
-        "datasource": { "type": "prometheus", "uid": "gmp" },
-        "refresh": 2,
-        "query": "label_values({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\", topic_id=~\"$topic_input\"}, topic_id)",
-        "regex": "/(store-\\d{4})-topic/",
-        "sort": 0,
-        "hide": 2
-      },
-      {
-        "name": "topic_id",
-        "type": "custom",
-        "label": "Normalized Topic",
-        "query": "${store_base}-topic",
-        "hide": 2
-      },
-      {
-        "name": "subscription_id",
-        "type": "custom",
-        "label": "Derived Subscription",
-        "query": "${store_base}-sub",
-        "hide": 2
-      }
-    ]
-  },
-  "panels": [
-    {
-      "type": "stat",
-      "title": "Topic Selected",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "gmp" }, "expr": "0", "refId": "A" }],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "name" },
-      "fieldConfig": { "defaults": { "displayName": "${topic_id}" }, "overrides": [] }
-    },
-    {
-      "type": "stat",
-      "title": "Subscription Selected",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "gmp" }, "expr": "0", "refId": "A" }],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "name" },
-      "fieldConfig": { "defaults": { "displayName": "${subscription_id}" }, "overrides": [] }
-    },
-
-    {
-      "type": "timeseries",
-      "title": "Published Message Count (msg/s) [Topic]",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "sum by (topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\", topic_id=\"$topic_id\"}[1m]))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Publish Requests (req/s) [Topic]",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "sum by (topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_request_count\", topic_id=\"$topic_id\"}[1m]))",
-          "refId": "A"
-        }
-      ]
-    },
-
-    {
-      "type": "timeseries",
-      "title": "Ack Message Count (msg/s) [Subscription]",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "sum by (subscription_id) (rate({__name__=\"pubsub.googleapis.com/subscription/ack_message_count\", subscription_id=\"$subscription_id\"}[1m]))",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Oldest Unacked Message Age (s) [Subscription]",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "avg_over_time({__name__=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\", subscription_id=\"$subscription_id\"}[1m])",
-          "refId": "A"
-        }
-      ]
-    },
-
-    {
-      "type": "timeseries",
-      "title": "Average Message Size (bytes/msg) [Topic]",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "( sum by (topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/byte_count\", topic_id=\"$topic_id\"}[1m])) ) / ( sum by (topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\", topic_id=\"$topic_id\"}[1m])) )",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Publish Throughput (bytes/s) [Topic]",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "sum by (topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/byte_count\", topic_id=\"$topic_id\"}[1m]))",
-          "refId": "A"
-        }
-      ]
-    },
-
-    {
-      "type": "timeseries",
-      "title": "Average Messages per Batch (msg/req) [Topic]",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "gmp" },
-          "expr": "( sum by (topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\", topic_id=\"$topic_id\"}[1m])) ) / ( sum by (topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_request_count\", topic_id=\"$topic_id\"}[1m])) )",
-          "refId": "A"
-        }
-      ]
-    },
-{
-  "type": "timeseries",
-  "title": "p95 Publish Latency (s) [Topic]",
-  "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
-  "targets": [
-    {
-      "datasource": { "type": "prometheus", "uid": "gmp" },
-      "expr": "histogram_quantile(0.95, sum by (le, topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_latency_bucket\", topic_id=\"$topic_id\"}[5m])))",
-      "refId": "A"
-    }
-  ]
-}.
-{
-  "type": "timeseries",
-  "title": "DLQ Inflow (msg/s) [Subscription]",
-  "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
-  "targets": [
-    {
-      "datasource": { "type": "prometheus", "uid": "gmp" },
-      "expr": "sum by (subscription_id) (rate({__name__=\"pubsub.googleapis.com/subscription/dead_letter_message_count\", subscription_id=\"$subscription_id\"}[1m]))",
-      "refId": "A"
-    }
-  ]
+variable "threshold_quota_utilization_pct" {
+  type        = number
+  default     = 80.0
 }
 
 
-  ]
+//// main.tf
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = ">= 5.29.0"
+    }
+  }
+}
 
+provider "google" {
+  project = var.project_id
+}
+
+locals {
+  topic_regex        = var.topic_regex        # e.g., store-[0-9]+-topic
+  subscription_regex = var.subscription_regex # e.g., store-[0-9]+-sub
+}
+
+# 1) Publisher — Publish failure rate >= X% (per topic)
+resource "google_monitoring_alert_policy" "topic_failure_rate" {
+  display_name          = "Pub/Sub Topic - Publish Failure Rate >= ${var.threshold_publish_failure_pct}% (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "Failure-rate >= ${var.threshold_publish_failure_pct}% on ${labels.topic_id}. Check publisher errors, quotas, and networking."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "Failure rate >= ${var.threshold_publish_failure_pct}%"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        100 *
+        sum by (topic_id)(
+          rate({__name__="pubsub.googleapis.com/topic/send_message_operation_count",
+                response_code="ERROR",
+                topic_id=~"${local.topic_regex}"}[5m])
+        )
+        /
+        sum by (topic_id)(
+          rate({__name__="pubsub.googleapis.com/topic/send_message_operation_count",
+                topic_id=~"${local.topic_regex}"}[5m])
+        )
+        > ${var.threshold_publish_failure_pct}
+      EOT
+      duration            = "600s"  # 10m
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubTopicPublishFailureRate"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+# 2) Publisher — p95 publish latency >= Xs (per topic)
+resource "google_monitoring_alert_policy" "topic_p95_latency" {
+  display_name          = "Pub/Sub Topic - p95 Publish Latency >= ${var.threshold_publish_p95_latency_s}s (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "p95 publish latency high on ${labels.topic_id}. Validate client batching, VPC egress, and regional health."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "p95 publish latency >= ${var.threshold_publish_p95_latency_s}s"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        histogram_quantile(
+          0.95,
+          sum by (le, topic_id) (
+            rate({__name__="pubsub.googleapis.com/topic/send_message_operation_latency_bucket",
+                  topic_id=~"${local.topic_regex}"}[5m])
+          )
+        ) > ${var.threshold_publish_p95_latency_s}
+      EOT
+      duration            = "600s"
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubTopicP95PublishLatency"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+# 3) Subscriber — Backlog >= N (per subscription)
+resource "google_monitoring_alert_policy" "sub_backlog" {
+  display_name          = "Pub/Sub Subscription - Backlog >= ${var.threshold_backlog} (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "Undelivered messages >= ${var.threshold_backlog} on ${labels.subscription_id}. Consumers may be stalled."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "Backlog >= ${var.threshold_backlog}"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        avg_over_time(
+          {__name__="pubsub.googleapis.com/subscription/num_undelivered_messages",
+           subscription_id=~"${local.subscription_regex}"}[5m]
+        ) > ${var.threshold_backlog}
+      EOT
+      duration            = "900s"  # 15m
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubSubscriptionBacklog"
+      labels              = { severity = "error" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+# 4) Subscriber — Oldest message age >= Xs (per subscription)
+resource "google_monitoring_alert_policy" "sub_oldest_age" {
+  display_name          = "Pub/Sub Subscription - Oldest Message Age >= ${var.threshold_oldest_age_s}s (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "Oldest unacked message age >= ${var.threshold_oldest_age_s}s on ${labels.subscription_id}. Check throughput and consumer errors."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "Oldest unacked message age >= ${var.threshold_oldest_age_s}s"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        avg_over_time(
+          {__name__="pubsub.googleapis.com/subscription/oldest_unacked_message_age",
+           subscription_id=~"${local.subscription_regex}"}[1m]
+        ) > ${var.threshold_oldest_age_s}
+      EOT
+      duration            = "600s"  # 10m
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubSubscriptionOldestUnackedAge"
+      labels              = { severity = "error" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+# 5) Subscriber — Ack rate ~ 0 (consumer stalled)
+resource "google_monitoring_alert_policy" "sub_ack_rate_low" {
+  display_name          = "Pub/Sub Subscription - Ack Rate <= ${var.threshold_ack_rate_min} msg/s (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "Ack rate ~0 on ${labels.subscription_id}. The consumer might be down or blocked."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "Ack rate <= ${var.threshold_ack_rate_min} msg/s"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        avg_over_time(
+          rate({__name__="pubsub.googleapis.com/subscription/ack_message_count",
+                subscription_id=~"${local.subscription_regex}"}[1m])[10m:]
+        ) < ${var.threshold_ack_rate_min}
+      EOT
+      duration            = "600s"
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubSubscriptionAckRateLow"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+# 6) Subscriber — DLQ traffic > 0 (per subscription)
+resource "google_monitoring_alert_policy" "sub_dlq_rate" {
+  display_name          = "Pub/Sub Subscription - DLQ Traffic > 0 (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "Messages routed to DLQ on ${labels.subscription_id}. Inspect DLQ topic and consumer exceptions."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "DLQ traffic > 0"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        sum by (subscription_id)(
+          rate({__name__="pubsub.googleapis.com/subscription/dead_letter_message_count",
+                subscription_id=~"${local.subscription_regex}"}[1m])
+        ) > 0
+      EOT
+      duration            = "300s" # 5m
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubSubscriptionDLQTraffic"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+# 7) Service health — Pub/Sub API 5xx >= X% (project-wide)
+resource "google_monitoring_alert_policy" "service_5xx" {
+  display_name          = "Service Health - Pub/Sub API 5xx >= ${var.threshold_service_5xx_pct}% (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "Increased Pub/Sub API 5xx across the project; potential regional/service incident."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "API 5xx >= ${var.threshold_service_5xx_pct}%"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        100 *
+        sum(rate({__name__="serviceruntime.googleapis.com/api/request_count",
+                  service="pubsub.googleapis.com",
+                  response_code_class="5xx"}[1m]))
+        /
+        sum(rate({__name__="serviceruntime.googleapis.com/api/request_count",
+                  service="pubsub.googleapis.com"}[1m]))
+        > ${var.threshold_service_5xx_pct}
+      EOT
+      duration            = "180s"
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubService5xxRate"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+# 8) Quotas — utilization >= X% (clone for subs & storage)
+resource "google_monitoring_alert_policy" "quota_topics" {
+  display_name          = "Quota - Topic Count Utilization >= ${var.threshold_quota_utilization_pct}% (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation {
+    content   = "Topic count usage >= ${var.threshold_quota_utilization_pct}% of limit. Consider sharding or quota increase."
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "Topic quota utilization >= ${var.threshold_quota_utilization_pct}%"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        100 *
+        avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/usage",
+                       service="pubsub.googleapis.com",
+                       quota_metric="pubsub.googleapis.com/topic_count"}[5m])
+        /
+        avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/limit",
+                       service="pubsub.googleapis.com",
+                       quota_metric="pubsub.googleapis.com/topic_count"}[5m])
+        > ${var.threshold_quota_utilization_pct}
+      EOT
+      duration            = "600s"
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubQuotaTopicUtilization"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+resource "google_monitoring_alert_policy" "quota_subs" {
+  display_name          = "Quota - Subscription Count Utilization >= ${var.threshold_quota_utilization_pct}% (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation { content = "Subscription count usage near limit."; mime_type = "text/markdown" }
+  conditions {
+    display_name = "Subscription quota utilization"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        100 *
+        avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/usage",
+                       service="pubsub.googleapis.com",
+                       quota_metric="pubsub.googleapis.com/subscription_count"}[5m])
+        /
+        avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/limit",
+                       service="pubsub.googleapis.com",
+                       quota_metric="pubsub.googleapis.com/subscription_count"}[5m])
+        > ${var.threshold_quota_utilization_pct}
+      EOT
+      duration            = "600s"
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubQuotaSubscriptionUtilization"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
+}
+
+resource "google_monitoring_alert_policy" "quota_storage" {
+  display_name          = "Quota - Message Storage Utilization >= ${var.threshold_quota_utilization_pct}% (PromQL)"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = var.notification_channels
+  documentation { content = "Message storage bytes near limit; consider retention tuning and cleanup."; mime_type = "text/markdown" }
+  conditions {
+    display_name = "Storage quota utilization"
+    condition_prometheus_query_language {
+      query = <<-EOT
+        100 *
+        avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/usage",
+                       service="pubsub.googleapis.com",
+                       quota_metric="pubsub.googleapis.com/message_storage_bytes"}[5m])
+        /
+        avg_over_time({__name__="serviceruntime.googleapis.com/quota/allocation/limit",
+                       service="pubsub.googleapis.com",
+                       quota_metric="pubsub.googleapis.com/message_storage_bytes"}[5m])
+        > ${var.threshold_quota_utilization_pct}
+      EOT
+      duration            = "600s"
+      evaluation_interval = "60s"
+      alert_rule          = "PubSubQuotaStorageUtilization"
+      labels              = { severity = "warning" }
+    }
+  }
+  alert_strategy { auto_close = "3600s" }
 }
 
 
+/// 
