@@ -4,11 +4,20 @@
   "title": "Pub/Sub Top-10 (PromQL)",
   "tags": ["pubsub", "top10", "promql"],
   "schemaVersion": 38,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": { "from": "now-6h", "to": "now" },
   "templating": {
     "list": [
+      {
+        "name": "gcp_ds",
+        "type": "datasource",
+        "label": "Datasource",
+        "query": "stackdriver",
+        "regex": "/^(grafana-gcp-pr|grafana-gcp-np)$/",
+        "current": { "text": "grafana-gcp-pr", "value": "grafana-gcp-pr" },
+        "description": "Pick GCM datasource (prod or non-prod)"
+      },
       {
         "name": "gcp_project",
         "type": "textbox",
@@ -25,7 +34,7 @@
       "title": "Top 10 Topics by Publish Failure Rate (%)",
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 0 },
       "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "grafana-datasource" },
+        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
         "queryType": "promql",
         "projectName": "$gcp_project",
         "promqlQuery": "topk(10, 100 * sum by (topic_id)(rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\",response_code=\"ERROR\",topic_id=~\"store-[0-9]+-topic\"}[5m])) / sum by (topic_id)(rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\",topic_id=~\"store-[0-9]+-topic\"}[5m])))",
@@ -38,7 +47,7 @@
       "title": "Top 10 Topics by p95 Publish Latency (s)",
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 0 },
       "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "grafana-datasource" },
+        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
         "queryType": "promql",
         "projectName": "$gcp_project",
         "promqlQuery": "topk(10, histogram_quantile(0.95, sum by (le, topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_latency_bucket\",topic_id=~\"store-[0-9]+-topic\"}[5m]))))",
@@ -51,7 +60,7 @@
       "title": "Top 10 Subscriptions by Backlog (messages)",
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 10 },
       "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "grafana-datasource" },
+        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
         "queryType": "promql",
         "projectName": "$gcp_project",
         "promqlQuery": "topk(10, avg_over_time({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"store-[0-9]+-sub\"}[5m]))",
@@ -64,7 +73,7 @@
       "title": "Top 10 Subscriptions by Oldest Message Age (s)",
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 10 },
       "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "grafana-datasource" },
+        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
         "queryType": "promql",
         "projectName": "$gcp_project",
         "promqlQuery": "topk(10, avg_over_time({__name__=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\",subscription_id=~\"store-[0-9]+-sub\"}[5m]))",
@@ -77,7 +86,7 @@
       "title": "Top 10 Subscriptions by DLQ Rate (msg/s)",
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 20 },
       "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "grafana-datasource" },
+        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
         "queryType": "promql",
         "projectName": "$gcp_project",
         "promqlQuery": "topk(10, sum by (subscription_id)(rate({__name__=\"pubsub.googleapis.com/subscription/dead_letter_message_count\",subscription_id=~\"store-[0-9]+-sub\"}[1m])))",
@@ -91,7 +100,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
       "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "grafana-datasource" },
+        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
         "queryType": "promql",
         "projectName": "$gcp_project",
         "promqlQuery": "100 * avg_over_time({__name__=\"serviceruntime.googleapis.com/quota/allocation/usage\",service=\"pubsub.googleapis.com\",quota_metric=\"pubsub.googleapis.com/topic_count\"}[5m]) / avg_over_time({__name__=\"serviceruntime.googleapis.com/quota/allocation/limit\",service=\"pubsub.googleapis.com\",quota_metric=\"pubsub.googleapis.com/topic_count\"}[5m])",
