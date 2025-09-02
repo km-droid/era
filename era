@@ -1,112 +1,146 @@
-{
-  "id": null,
-  "uid": "pubsub-top10-promql",
-  "title": "Pub/Sub Top-10 (PromQL)",
-  "tags": ["pubsub", "top10", "promql"],
-  "schemaVersion": 38,
-  "version": 3,
-  "refresh": "30s",
-  "time": { "from": "now-6h", "to": "now" },
-  "templating": {
-    "list": [
-      {
-        "name": "gcp_ds",
-        "type": "datasource",
-        "label": "Datasource",
-        "query": "stackdriver",
-        "regex": "/^(grafana-gcp-pr|grafana-gcp-np)$/",
-        "current": { "text": "grafana-gcp-pr", "value": "grafana-gcp-pr" },
-        "description": "Pick GCM datasource (prod or non-prod)"
-      },
-      {
-        "name": "gcp_project",
-        "type": "textbox",
-        "label": "GCP Project",
-        "query": "",
-        "current": { "text": "my-project-id", "value": "my-project-id" },
-        "description": "Project to query in Cloud Monitoring (PromQL)"
-      }
-    ]
-  },
-  "panels": [
-    {
-      "type": "table",
-      "title": "Top 10 Topics by Publish Failure Rate (%)",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 0 },
-      "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
-        "queryType": "promql",
-        "projectName": "$gcp_project",
-        "promqlQuery": "topk(10, 100 * sum by (topic_id)(rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\",response_code=\"ERROR\",topic_id=~\"store-[0-9]+-topic\"}[5m])) / sum by (topic_id)(rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_count\",topic_id=~\"store-[0-9]+-topic\"}[5m])))",
-        "minStep": "$__rate_interval",
-        "refId": "A"
-      }]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Topics by p95 Publish Latency (s)",
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 0 },
-      "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
-        "queryType": "promql",
-        "projectName": "$gcp_project",
-        "promqlQuery": "topk(10, histogram_quantile(0.95, sum by (le, topic_id) (rate({__name__=\"pubsub.googleapis.com/topic/send_message_operation_latency_bucket\",topic_id=~\"store-[0-9]+-topic\"}[5m]))))",
-        "minStep": "$__rate_interval",
-        "refId": "A"
-      }]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Subscriptions by Backlog (messages)",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 10 },
-      "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
-        "queryType": "promql",
-        "projectName": "$gcp_project",
-        "promqlQuery": "topk(10, avg_over_time({__name__=\"pubsub.googleapis.com/subscription/num_undelivered_messages\",subscription_id=~\"store-[0-9]+-sub\"}[5m]))",
-        "minStep": "$__rate_interval",
-        "refId": "A"
-      }]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Subscriptions by Oldest Message Age (s)",
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 10 },
-      "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
-        "queryType": "promql",
-        "projectName": "$gcp_project",
-        "promqlQuery": "topk(10, avg_over_time({__name__=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\",subscription_id=~\"store-[0-9]+-sub\"}[5m]))",
-        "minStep": "$__rate_interval",
-        "refId": "A"
-      }]
-    },
-    {
-      "type": "table",
-      "title": "Top 10 Subscriptions by DLQ Rate (msg/s)",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 20 },
-      "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
-        "queryType": "promql",
-        "projectName": "$gcp_project",
-        "promqlQuery": "topk(10, sum by (subscription_id)(rate({__name__=\"pubsub.googleapis.com/subscription/dead_letter_message_count\",subscription_id=~\"store-[0-9]+-sub\"}[1m])))",
-        "minStep": "$__rate_interval",
-        "refId": "A"
-      }]
-    },
-    {
-      "type": "stat",
-      "title": "Quota Utilization: Topic Count (%)",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "targets": [{
-        "datasource": { "type": "stackdriver", "uid": "$gcp_ds" },
-        "queryType": "promql",
-        "projectName": "$gcp_project",
-        "promqlQuery": "100 * avg_over_time({__name__=\"serviceruntime.googleapis.com/quota/allocation/usage\",service=\"pubsub.googleapis.com\",quota_metric=\"pubsub.googleapis.com/topic_count\"}[5m]) / avg_over_time({__name__=\"serviceruntime.googleapis.com/quota/allocation/limit\",service=\"pubsub.googleapis.com\",quota_metric=\"pubsub.googleapis.com/topic_count\"}[5m])",
-        "minStep": "$__rate_interval",
-        "refId": "A"
-      }]
-    }
-  ]
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"sync"
+
+	edgecontainer "cloud.google.com/go/edgecontainer/apiv1"
+	edgecontainerpb "cloud.google.com/go/edgecontainer/apiv1/edgecontainerpb"
+	"google.golang.org/api/iterator"
+)
+
+type ClusterInfo struct {
+	StoreNumber string `json:"storeNumber"`
+	ClusterName string `json:"clusterName"`
+	Region      string `json:"region"`
+}
+
+type JoinedEntry struct {
+	StoreNumber         string `json:"storeNumber"`
+	ClusterName         string `json:"clusterName"`
+	MachineID           string `json:"machineID"`
+	Region              string `json:"region"`
+	UptimeMetricFilter  string `json:"uptimeMetricFilter"`
+}
+
+func main() {
+	ctx := context.Background()
+	projectID := "your-project-id" // <-- replace with your GCP project ID
+	clusterMap := make(map[string]ClusterInfo)
+	regionSet := make(map[string]bool)
+
+	// 1. Fetch all clusters
+	clusterClient, err := edgecontainer.NewClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create Edge Container client: %v", err)
+	}
+	defer clusterClient.Close()
+
+	clusterReq := &edgecontainerpb.ListClustersRequest{
+		Parent: fmt.Sprintf("projects/%s/locations/-", projectID),
+	}
+	clusterIt := clusterClient.ListClusters(ctx, clusterReq)
+	for {
+		cluster, err := clusterIt.Next()
+		if err == iterator.Done {
+			break
+		} else if err != nil {
+			log.Fatalf("Error listing clusters: %v", err)
+		}
+
+		nameParts := strings.Split(cluster.GetName(), "/")
+		region := nameParts[3]
+		clusterName := nameParts[len(nameParts)-1]
+		storeNumber := cluster.GetLabels()["storenumber"]
+
+		if storeNumber != "" {
+			clusterMap[clusterName] = ClusterInfo{
+				StoreNumber: storeNumber,
+				ClusterName: clusterName,
+				Region:      region,
+			}
+			regionSet[region] = true
+		}
+	}
+
+	// 2. Fetch machines per region in parallel and join with clusters
+	var wg sync.WaitGroup
+	entryCh := make(chan JoinedEntry, 100)
+	errCh := make(chan error, 1)
+
+	for region := range regionSet {
+		wg.Add(1)
+		go func(region string) {
+			defer wg.Done()
+			machineReq := &edgecontainerpb.ListMachinesRequest{
+				Parent: fmt.Sprintf("projects/%s/locations/%s", projectID, region),
+			}
+			machineIt := clusterClient.ListMachines(ctx, machineReq)
+			for {
+				machine, err := machineIt.Next()
+				if err == iterator.Done {
+					break
+				} else if err != nil {
+					errCh <- fmt.Errorf("error listing machines in region %s: %w", region, err)
+					return
+				}
+
+				machineID := strings.Split(machine.GetName(), "/")[len(strings.Split(machine.GetName(), "/"))-1]
+				clusterLabel := machine.GetLabels()["cluster"]
+
+				if cluster, ok := clusterMap[clusterLabel]; ok {
+					entryCh <- JoinedEntry{
+						StoreNumber:        cluster.StoreNumber,
+						ClusterName:        cluster.ClusterName,
+						MachineID:          machineID,
+						Region:             cluster.Region,
+						UptimeMetricFilter: fmt.Sprintf("resource.label.machine_id=\"%s\"", machineID),
+					}
+				}
+			}
+		}(region)
+	}
+
+	// Close channel after all workers are done
+	go func() {
+		wg.Wait()
+		close(entryCh)
+	}()
+
+	var result []JoinedEntry
+	for {
+		select {
+		case entry, ok := <-entryCh:
+			if !ok {
+				entryCh = nil
+			} else {
+				result = append(result, entry)
+			}
+		case err := <-errCh:
+			log.Fatalf("Error during processing: %v", err)
+		}
+		if entryCh == nil {
+			break
+		}
+	}
+
+	// 3. Output JSON to file
+	file, err := os.Create("joined_output.json")
+	if err != nil {
+		log.Fatalf("Failed to create output file: %v", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(result); err != nil {
+		log.Fatalf("Failed to write JSON to file: %v", err)
+	}
+
+	fmt.Println("✅ JSON written to joined_output.json")
 }
