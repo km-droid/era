@@ -1,161 +1,255 @@
-package main
-
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"os"
-	"strings"
-	"sync"
-
-	edgecontainer "cloud.google.com/go/edgecontainer/apiv1"
-	edgecontainerpb "cloud.google.com/go/edgecontainer/apiv1/edgecontainerpb"
-	"google.golang.org/api/iterator"
-)
-
-type ClusterInfo struct {
-	StoreNumber string `json:"storeNumber"`
-	ClusterName string `json:"clusterName"`
-	Region      string `json:"region"`
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    google = { source = "hashicorp/google" }
+  }
 }
 
-type JoinedEntry struct {
-	StoreNumber         string `json:"storeNumber"`
-	ClusterName         string `json:"clusterName"`
-	MachineID           string `json:"machineID"`
-	Region              string `json:"region"`
-	UptimeMetricFilter  string `json:"uptimeMetricFilter"`
+variable "project_id"   { type = string }
+variable "shard_count"  { type = number  default = 6 }     # total states
+variable "shard_index"  { type = number  }                  # 0..(shard_count-1)
+variable "input_format" { type = string  default = "json" } # "json" or "csv"
+
+# ---- Read store IDs ----
+locals {
+  store_ids_json = var.input_format == "json" ? jsondecode(file("${path.module}/stores.json")) : []
+  store_rows_csv = var.input_format == "csv"  ? csvdecode(file("${path.module}/stores.csv"))  : []
+  store_ids_csv  = [for r in local.store_rows_csv : r.id]
+  store_ids      = var.input_format == "json" ? local.store_ids_json : local.store_ids_csv
+
+  # shard by consistent hash (md5) -> int -> modulo
+  # md5() returns hex; use first 8 chars as uint32
+  shard_filtered_ids = [
+    for id in local.store_ids :
+    id if (parseint(substr(md5(id), 0, 8), 16) % var.shard_count) == var.shard_index
+  ]
+
+  # materialize names for each store
+  stores = {
+    for id in local.shard_filtered_ids :
+    id => {
+      topic_name = "store-topic-${id}"
+      sub_name   = "store-sub-${id}"
+    }
+  }
 }
 
-func fetchClusters(ctx context.Context, client *edgecontainer.Client, projectID, region string) (map[string]ClusterInfo, error) {
-	clusterMap := make(map[string]ClusterInfo)
-	clusterReq := &edgecontainerpb.ListClustersRequest{
-		Parent: fmt.Sprintf("projects/%s/locations/%s", projectID, region),
-	}
-	clusterIt := client.ListClusters(ctx, clusterReq)
-	for {
-		cluster, err := clusterIt.Next()
-		if err == iterator.Done {
-			break
-		} else if err != nil {
-			return nil, fmt.Errorf("error listing clusters: %w", err)
-		}
+# ---- One module instance per store ----
+module "store_pubsub" {
+  source  = "git::https://github.com/platform-org/modules.git//pubsub?ref=refs/tags/v3.0"
+  for_each = local.stores
 
-		nameParts := strings.Split(cluster.GetName(), "/")
-		clusterName := nameParts[len(nameParts)-1]
-		storeNumber := cluster.GetLabels()["storenumber"]
+  project_id                  = var.project_id
+  name                        = each.value.topic_name
+  message_retention_dutation  = "604800s"                      # keep as your module expects
+  subscription_project_id     = var.project_id
 
-		if storeNumber != "" {
-			clusterMap[clusterName] = ClusterInfo{
-				StoreNumber: storeNumber,
-				ClusterName: clusterName,
-				Region:      region,
-			}
-		}
-	}
-	return clusterMap, nil
+  # 1:1 subscription map
+  subscriptions = {
+    "${each.value.sub_name}" = {
+      # NOTE: keep attribute spellings exactly as your module expects
+      lables  = { test = "tf" }                                # if the module's input is actually "labels", fix it here
+      options = { filters = "blah" }                           # same note for "filters" vs "filter"
+    }
+  }
 }
 
-func fetchMachinesAndJoin(ctx context.Context, client *edgecontainer.Client, projectID, region string, clusterMap map[string]ClusterInfo) ([]JoinedEntry, error) {
-	var wg sync.WaitGroup
-	entryCh := make(chan JoinedEntry, 100)
-	errCh := make(chan error, 1)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		machineReq := &edgecontainerpb.ListMachinesRequest{
-			Parent: fmt.Sprintf("projects/%s/locations/%s", projectID, region),
-		}
-		machineIt := client.ListMachines(ctx, machineReq)
-		for {
-			machine, err := machineIt.Next()
-			if err == iterator.Done {
-				break
-			} else if err != nil {
-				errCh <- fmt.Errorf("error listing machines: %w", err)
-				return
-			}
 
-			machineID := strings.Split(machine.GetName(), "/")[len(strings.Split(machine.GetName(), "/"))-1]
-			clusterLabel := machine.GetLabels()["cluster"]
++++++++++++++++++++++++++++++++++++
 
-			if cluster, ok := clusterMap[clusterLabel]; ok {
-				entryCh <- JoinedEntry{
-					StoreNumber:        cluster.StoreNumber,
-					ClusterName:        cluster.ClusterName,
-					MachineID:          machineID,
-					Region:             cluster.Region,
-					UptimeMetricFilter: fmt.Sprintf("resource.label.machine_id=\"%s\"", machineID),
-				}
-			}
-		}
-	}()
-
-	go func() {
-		wg.Wait()
-		close(entryCh)
-	}()
-
-	var result []JoinedEntry
-	for {
-		select {
-		case entry, ok := <-entryCh:
-			if !ok {
-				entryCh = nil
-			} else {
-				result = append(result, entry)
-			}
-		case err := <-errCh:
-			return nil, err
-		}
-		if entryCh == nil {
-			break
-		}
-	}
-	return result, nil
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    google = { source = "hashicorp/google" }
+  }
 }
 
-func writeJSONToFile(data []JoinedEntry, filename string) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
-	}
-	defer file.Close()
+variable "project_id"   { type = string }
+variable "shard_count"  { type = number  default = 6 }     # total states
+variable "shard_index"  { type = number  }                  # 0..(shard_count-1)
+variable "input_format" { type = string  default = "json" } # "json" or "csv"
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(data); err != nil {
-		return fmt.Errorf("failed to write JSON to file: %w", err)
-	}
-	return nil
+# ---- Read store IDs ----
+locals {
+  store_ids_json = var.input_format == "json" ? jsondecode(file("${path.module}/stores.json")) : []
+  store_rows_csv = var.input_format == "csv"  ? csvdecode(file("${path.module}/stores.csv"))  : []
+  store_ids_csv  = [for r in local.store_rows_csv : r.id]
+  store_ids      = var.input_format == "json" ? local.store_ids_json : local.store_ids_csv
+
+  # shard by consistent hash (md5) -> int -> modulo
+  # md5() returns hex; use first 8 chars as uint32
+  shard_filtered_ids = [
+    for id in local.store_ids :
+    id if (parseint(substr(md5(id), 0, 8), 16) % var.shard_count) == var.shard_index
+  ]
+
+  # materialize names for each store
+  stores = {
+    for id in local.shard_filtered_ids :
+    id => {
+      topic_name = "store-topic-${id}"
+      sub_name   = "store-sub-${id}"
+    }
+  }
 }
 
-func main() {
-	ctx := context.Background()
-	projectID := "your-project-id" // <-- replace with your GCP project ID
-	region := "us-east1"
+# ---- One module instance per store ----
+module "store_pubsub" {
+  source  = "git::https://github.com/platform-org/modules.git//pubsub?ref=refs/tags/v3.0"
+  for_each = local.stores
 
-	client, err := edgecontainer.NewClient(ctx)
-	if err != nil {
-		log.Fatalf("Failed to create Edge Container client: %v", err)
-	}
-	defer client.Close()
+  project_id                  = var.project_id
+  name                        = each.value.topic_name
+  message_retention_dutation  = "604800s"                      # keep as your module expects
+  subscription_project_id     = var.project_id
 
-	clusterMap, err := fetchClusters(ctx, client, projectID, region)
-	if err != nil {
-		log.Fatalf("Failed to fetch clusters: %v", err)
-	}
-
-	entries, err := fetchMachinesAndJoin(ctx, client, projectID, region, clusterMap)
-	if err != nil {
-		log.Fatalf("Failed to fetch machines and join: %v", err)
-	}
-
-	if err := writeJSONToFile(entries, "joined_output.json"); err != nil {
-		log.Fatalf("Failed to write JSON output: %v", err)
-	}
-
-	fmt.Println("✅ JSON written to joined_output.json")
+  # 1:1 subscription map
+  subscriptions = {
+    "${each.value.sub_name}" = {
+      # NOTE: keep attribute spellings exactly as your module expects
+      lables  = { test = "tf" }                                # if the module's input is actually "labels", fix it here
+      options = { filters = "blah" }                           # same note for "filters" vs "filter"
+    }
+  }
 }
+
+
+
+
+
+
+
++++++++++++++++++++++++++++++
+####  .github/workflows/terraform-plan.yml (PRs)
+name: terraform-plan
+on:
+  pull_request:
+    paths:
+      - 'infra/**'           # limit to infra changes
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3        # tune to avoid Pub/Sub Admin API throttling
+      matrix:
+        shard: [0,1,2,3,4,5]
+    defaults:
+      run:
+        working-directory: infra/shard-${{ matrix.shard }}
+
+    permissions:
+      contents: read
+      id-token: write        # for workload identity
+      pull-requests: write   # to comment with plan summary (optional)
+
+    concurrency:
+      group: tf-plan-shard-${{ matrix.shard }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Auth to GCP via Workload Identity Federation
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}   # e.g. projects/123/locations/global/workloadIdentityPools/gh-pool/providers/gh
+          service_account: ${{ secrets.GCP_TF_SA }}                     # e.g. tf-deployer@your-proj.iam.gserviceaccount.com
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        env:
+          TF_INPUT: "false"
+        run: |
+          terraform plan \
+            -input=false \
+            -parallelism=50 \
+            -out=plan.tfplan
+
+      - name: Save plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}-plan
+          path: infra/shard-${{ matrix.shard }}/plan.tfplan
++++++++++++++++++++++++++++++++++||\\
+.github/workflows/terraform-apply.yml (after merge to main)
+name: terraform-apply
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'infra/**'
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: prod        # protect with required reviewers in GitHub settings
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard: [0,1,2,3,4,5]
+    defaults:
+      run:
+        working-directory: infra/shard-${{ matrix.shard }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    concurrency:
+      group: tf-apply-shard-${{ matrix.shard }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_TF_SA }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan (confirm drift)
+        run: terraform plan -input=false -parallelism=50
+
+      - name: Terraform Apply
+        env:
+          TF_INPUT: "false"
+        run: terraform apply -input=false -parallelism=50 -auto-approve
+
+Notes & options
+
+Backend/state: if your backend is GCS, keep the backend block in HCL (per shard) and let terraform init pick it up. If you prefer CLI config, add -backend-config="bucket=…" flags in the Init step.
+
+Vars: keep shard-specific terraform.tfvars files in each folder (simplest). If you prefer CLI vars, add -var shard_index=${{ matrix.shard }} to plan/apply.
+
+Rate limits: adjust max-parallel and -parallelism to avoid Pub/Sub Admin API 429s. Start conservative (e.g., max-parallel: 2, -parallelism=30) and increase gradually.
+
+Locks: GCS backends lock per state; with one state per shard you’re safe to run shards in parallel.
+
+Selective runs: If only some shards changed, you can add lightweight detection to skip others; but with shared inputs (e.g., stores.json) it’s common to run all shards—only the ones with diffs will modify anything.
+
+Prevent destroy: keep prevent_destroy on topics/subs by default; for intentional removals, flip a variable in just the affected shard and re-apply.
+
+PR decorations: you can add a step to post terraform show -no-color plan.tfplan as a PR comment per shard if desired.
+
