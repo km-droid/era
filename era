@@ -1,30 +1,83 @@
+Repository layout
+repo-root/
+├─ .github/
+│  └─ workflows/
+│     ├─ terraform-plan.yml
+│     └─ terraform-apply.yml
+├─ infra/
+│  ├─ modules/
+│  │  └─ pubsub_stack/
+│  │     ├─ main.tf
+│  │     ├─ variables.tf
+│  │     └─ versions.tf
+│  ├─ shard-0/
+│  │  ├─ backend.tf
+│  │  ├─ main.tf
+│  │  ├─ terraform.tfvars
+│  │  └─ versions.tf
+│  ├─ shard-1/
+│  │  ├─ backend.tf
+│  │  ├─ main.tf
+│  │  ├─ terraform.tfvars
+│  │  └─ versions.tf
+│  ├─ shard-2/   (same four files)
+│  ├─ shard-3/   (same four files)
+│  ├─ shard-4/   (same four files)
+│  └─ shard-5/   (same four files)
+├─ config/
+│  └─ stores.json
+├─ .gitignore
+└─ README.md
+
+config/stores.json (IDs source)
+["000001","000002","000003"]
+
+
+You can use CSV instead if you prefer; the module supports both.
+
+infra/modules/pubsub_stack/variables.tf
+variable "project_id"   { type = string }
+variable "shard_count"  { type = number  default = 6 }
+variable "shard_index"  { type = number }          # 0..(shard_count-1)
+variable "input_format" { type = string  default = "json" } # "json" or "csv"
+variable "stores_file"  { type = string  default = "${path.root}/../../config/stores.json" }
+
+# Pub/Sub knobs you may want to expose
+variable "message_retention" { type = string default = "604800s" } # 7 days
+variable "subscription_labels" {
+  type    = map(string)
+  default = { managed_by = "terraform" }
+}
+variable "subscription_options" {
+  type = object({
+    filters = optional(string, null) # align with your module's schema
+  })
+  default = { filters = null }
+}
+
+infra/modules/pubsub_stack/versions.tf
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    google = { source = "hashicorp/google" }
+    google = { source = "hashicorp/google", version = ">= 5.0.0" }
   }
 }
 
-variable "project_id"   { type = string }
-variable "shard_count"  { type = number  default = 6 }     # total states
-variable "shard_index"  { type = number  }                  # 0..(shard_count-1)
-variable "input_format" { type = string  default = "json" } # "json" or "csv"
-
-# ---- Read store IDs ----
+infra/modules/pubsub_stack/main.tf
 locals {
-  store_ids_json = var.input_format == "json" ? jsondecode(file("${path.module}/stores.json")) : []
-  store_rows_csv = var.input_format == "csv"  ? csvdecode(file("${path.module}/stores.csv"))  : []
+  # Load store IDs (JSON or CSV)
+  store_ids_json = var.input_format == "json" ? jsondecode(file(var.stores_file)) : []
+  store_rows_csv = var.input_format == "csv"  ? csvdecode(file(var.stores_file))  : []
   store_ids_csv  = [for r in local.store_rows_csv : r.id]
   store_ids      = var.input_format == "json" ? local.store_ids_json : local.store_ids_csv
 
-  # shard by consistent hash (md5) -> int -> modulo
-  # md5() returns hex; use first 8 chars as uint32
+  # Deterministic sharding by hash(id)
   shard_filtered_ids = [
     for id in local.store_ids :
     id if (parseint(substr(md5(id), 0, 8), 16) % var.shard_count) == var.shard_index
   ]
 
-  # materialize names for each store
+  # Build resource names
   stores = {
     for id in local.shard_filtered_ids :
     id => {
@@ -34,222 +87,107 @@ locals {
   }
 }
 
-# ---- One module instance per store ----
+# One pubsub module per store ID
 module "store_pubsub" {
   source  = "git::https://github.com/platform-org/modules.git//pubsub?ref=refs/tags/v3.0"
   for_each = local.stores
 
-  project_id                  = var.project_id
-  name                        = each.value.topic_name
-  message_retention_dutation  = "604800s"                      # keep as your module expects
-  subscription_project_id     = var.project_id
+  project_id                 = var.project_id
+  name                       = each.value.topic_name
+  # NOTE: keep this spelling exactly as your external module expects.
+  # If the real variable is "message_retention_dutation" (typo), mirror it:
+  message_retention_dutation = var.message_retention
 
-  # 1:1 subscription map
+  subscription_project_id = var.project_id
+
   subscriptions = {
     "${each.value.sub_name}" = {
-      # NOTE: keep attribute spellings exactly as your module expects
-      lables  = { test = "tf" }                                # if the module's input is actually "labels", fix it here
-      options = { filters = "blah" }                           # same note for "filters" vs "filter"
+      # Align these keys to your module's input schema ("labels" vs "lables", "filter" vs "filters").
+      lables  = var.subscription_labels
+      options = { filters = var.subscription_options.filters }
     }
   }
 }
 
+Shard folders (repeat for shard-0..shard-5)
+infra/shard-0/backend.tf
+terraform {
+  backend "gcs" {
+    bucket = "YOUR_TF_STATE_BUCKET"
+    prefix = "pubsub/shard-0"   # unique per shard
+  }
+}
 
-
-+++++++++++++++++++++++++++++++++++
-
+infra/shard-0/versions.tf
 terraform {
   required_version = ">= 1.5.0"
-  required_providers {
-    google = { source = "hashicorp/google" }
-  }
 }
 
-variable "project_id"   { type = string }
-variable "shard_count"  { type = number  default = 6 }     # total states
-variable "shard_index"  { type = number  }                  # 0..(shard_count-1)
-variable "input_format" { type = string  default = "json" } # "json" or "csv"
+infra/shard-0/main.tf
+module "stack" {
+  source       = "../modules/pubsub_stack"
+  project_id   = var.project_id
+  shard_index  = 0
+  shard_count  = 6
 
-# ---- Read store IDs ----
-locals {
-  store_ids_json = var.input_format == "json" ? jsondecode(file("${path.module}/stores.json")) : []
-  store_rows_csv = var.input_format == "csv"  ? csvdecode(file("${path.module}/stores.csv"))  : []
-  store_ids_csv  = [for r in local.store_rows_csv : r.id]
-  store_ids      = var.input_format == "json" ? local.store_ids_json : local.store_ids_csv
-
-  # shard by consistent hash (md5) -> int -> modulo
-  # md5() returns hex; use first 8 chars as uint32
-  shard_filtered_ids = [
-    for id in local.store_ids :
-    id if (parseint(substr(md5(id), 0, 8), 16) % var.shard_count) == var.shard_index
-  ]
-
-  # materialize names for each store
-  stores = {
-    for id in local.shard_filtered_ids :
-    id => {
-      topic_name = "store-topic-${id}"
-      sub_name   = "store-sub-${id}"
-    }
-  }
+  # Optional overrides
+  # input_format       = "json"
+  # stores_file        = "${path.root}/../../config/stores.json"
+  # message_retention  = "604800s"
+  # subscription_labels = { managed_by = "terraform", env = "prod" }
+  # subscription_options = { filters = "blah" }
 }
 
-# ---- One module instance per store ----
-module "store_pubsub" {
-  source  = "git::https://github.com/platform-org/modules.git//pubsub?ref=refs/tags/v3.0"
-  for_each = local.stores
+variable "project_id" { type = string }
 
-  project_id                  = var.project_id
-  name                        = each.value.topic_name
-  message_retention_dutation  = "604800s"                      # keep as your module expects
-  subscription_project_id     = var.project_id
-
-  # 1:1 subscription map
-  subscriptions = {
-    "${each.value.sub_name}" = {
-      # NOTE: keep attribute spellings exactly as your module expects
-      lables  = { test = "tf" }                                # if the module's input is actually "labels", fix it here
-      options = { filters = "blah" }                           # same note for "filters" vs "filter"
-    }
-  }
-}
+infra/shard-0/terraform.tfvars
+project_id = "gcp-your-project-id"
 
 
+For shards 1–5, copy the same four files, change prefix in backend.tf and the shard_index in main.tf to 1..5.
+
+.gitignore
+**/.terraform/*
+**/.terraform.lock.hcl
+*.tfplan
+*.tfstate
+*.tfstate.backup
+.terraform.tfstate.lock.info
+
+README.md (excerpt)
+# Pub/Sub at Scale with Terraform Shards
+
+We manage ~6,000 topics + 6,000 subscriptions using 6 Terraform shards (≈1k resources each).
+Shards are selected deterministically by hashing the store ID, so each ID always maps to the same shard.
+
+## Layout
+- `config/stores.json` — authoritative list of store IDs (or a CSV with header `id`).
+- `infra/modules/pubsub_stack` — shared Terraform root module with sharding logic.
+- `infra/shard-N` — thin wrappers per shard with their own backend + variables.
+
+## Workflows
+- PRs: `.github/workflows/terraform-plan.yml` runs `plan` for all shards in parallel.
+- After merge to `main`: `.github/workflows/terraform-apply.yml` runs `apply` for all shards.
+
+## Local runs (optional)
+```bash
+cd infra/shard-0 && terraform init && terraform plan -parallelism=50
+
+Adding/Removing Stores
+
+Append/remove IDs in config/stores.json.
+
+Open a PR. On merge, only the shard(s) owning those IDs will change.
 
 
+---
 
+### Notes & options
 
+- **Single source of truth**: one `config/stores.json` (or CSV). The module reads it; each shard filters its slice.
+- **Backend isolation**: each shard has a unique `backend.tf` `prefix` to avoid lock contention.
+- **Module variable names**: ensure the keys you pass to your **external pubsub module** match its expectations (`lables` vs `labels`, `filters` vs `filter`, retention var name). I mirrored your snippet; adjust if needed.
+- **Policy guardrails**: keep `prevent_destroy` inside your external module defaults, and expose a toggle var to intentionally permit deletes during controlled PRs.
+- **IAM**: if you attach large IAM bindings, consider a separate module/state per shard to keep applies snappy.
 
-+++++++++++++++++++++++++++++
-####  .github/workflows/terraform-plan.yml (PRs)
-name: terraform-plan
-on:
-  pull_request:
-    paths:
-      - 'infra/**'           # limit to infra changes
-
-jobs:
-  plan:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 3        # tune to avoid Pub/Sub Admin API throttling
-      matrix:
-        shard: [0,1,2,3,4,5]
-    defaults:
-      run:
-        working-directory: infra/shard-${{ matrix.shard }}
-
-    permissions:
-      contents: read
-      id-token: write        # for workload identity
-      pull-requests: write   # to comment with plan summary (optional)
-
-    concurrency:
-      group: tf-plan-shard-${{ matrix.shard }}
-      cancel-in-progress: false
-
-    steps:
-      - uses: actions/checkout@v4
-
-      # Auth to GCP via Workload Identity Federation
-      - id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}   # e.g. projects/123/locations/global/workloadIdentityPools/gh-pool/providers/gh
-          service_account: ${{ secrets.GCP_TF_SA }}                     # e.g. tf-deployer@your-proj.iam.gserviceaccount.com
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.7.5
-
-      - name: Terraform Init
-        run: terraform init -input=false
-
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Plan
-        env:
-          TF_INPUT: "false"
-        run: |
-          terraform plan \
-            -input=false \
-            -parallelism=50 \
-            -out=plan.tfplan
-
-      - name: Save plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: shard-${{ matrix.shard }}-plan
-          path: infra/shard-${{ matrix.shard }}/plan.tfplan
-+++++++++++++++++++++++++++++++++||\\
-.github/workflows/terraform-apply.yml (after merge to main)
-name: terraform-apply
-on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'infra/**'
-
-jobs:
-  apply:
-    runs-on: ubuntu-latest
-    environment: prod        # protect with required reviewers in GitHub settings
-    strategy:
-      fail-fast: false
-      max-parallel: 3
-      matrix:
-        shard: [0,1,2,3,4,5]
-    defaults:
-      run:
-        working-directory: infra/shard-${{ matrix.shard }}
-
-    permissions:
-      contents: read
-      id-token: write
-
-    concurrency:
-      group: tf-apply-shard-${{ matrix.shard }}
-      cancel-in-progress: false
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_TF_SA }}
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.7.5
-
-      - name: Terraform Init
-        run: terraform init -input=false
-
-      - name: Terraform Plan (confirm drift)
-        run: terraform plan -input=false -parallelism=50
-
-      - name: Terraform Apply
-        env:
-          TF_INPUT: "false"
-        run: terraform apply -input=false -parallelism=50 -auto-approve
-
-Notes & options
-
-Backend/state: if your backend is GCS, keep the backend block in HCL (per shard) and let terraform init pick it up. If you prefer CLI config, add -backend-config="bucket=…" flags in the Init step.
-
-Vars: keep shard-specific terraform.tfvars files in each folder (simplest). If you prefer CLI vars, add -var shard_index=${{ matrix.shard }} to plan/apply.
-
-Rate limits: adjust max-parallel and -parallelism to avoid Pub/Sub Admin API 429s. Start conservative (e.g., max-parallel: 2, -parallelism=30) and increase gradually.
-
-Locks: GCS backends lock per state; with one state per shard you’re safe to run shards in parallel.
-
-Selective runs: If only some shards changed, you can add lightweight detection to skip others; but with shared inputs (e.g., stores.json) it’s common to run all shards—only the ones with diffs will modify anything.
-
-Prevent destroy: keep prevent_destroy on topics/subs by default; for intentional removals, flip a variable in just the affected shard and re-apply.
-
-PR decorations: you can add a step to post terraform show -no-color plan.tfplan as a PR comment per shard if desired.
-
+If you want, I can paste ready-to-use **workflow YAMLs** wired to GCP Workload Identity (with matrix over shards) customized to your bucket name and TF SA.
