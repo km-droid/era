@@ -1,193 +1,128 @@
-Repository layout
-repo-root/
-├─ .github/
-│  └─ workflows/
-│     ├─ terraform-plan.yml
-│     └─ terraform-apply.yml
-├─ infra/
-│  ├─ modules/
-│  │  └─ pubsub_stack/
-│  │     ├─ main.tf
-│  │     ├─ variables.tf
-│  │     └─ versions.tf
-│  ├─ shard-0/
-│  │  ├─ backend.tf
-│  │  ├─ main.tf
-│  │  ├─ terraform.tfvars
-│  │  └─ versions.tf
-│  ├─ shard-1/
-│  │  ├─ backend.tf
-│  │  ├─ main.tf
-│  │  ├─ terraform.tfvars
-│  │  └─ versions.tf
-│  ├─ shard-2/   (same four files)
-│  ├─ shard-3/   (same four files)
-│  ├─ shard-4/   (same four files)
-│  └─ shard-5/   (same four files)
-├─ config/
-│  └─ stores.json
-├─ .gitignore
-└─ README.md
+Release Management for GDCE Applications
 
-config/stores.json (IDs source)
-["000001","000002","000003"]
+(Unified RM + SRE Model)
 
+1. Context
 
-You can use CSV instead if you prefer; the module supports both.
+100+ GDCE-enabled stores already live, with more coming.
 
-infra/modules/pubsub_stack/variables.tf
-variable "project_id"   { type = string }
-variable "shard_count"  { type = number  default = 6 }
-variable "shard_index"  { type = number }          # 0..(shard_count-1)
-variable "input_format" { type = string  default = "json" } # "json" or "csv"
-variable "stores_file"  { type = string  default = "${path.root}/../../config/stores.json" }
+Apps are edge-specific and require consistent, reliable deployment practices.
 
-# Pub/Sub knobs you may want to expose
-variable "message_retention" { type = string default = "604800s" } # 7 days
-variable "subscription_labels" {
-  type    = map(string)
-  default = { managed_by = "terraform" }
-}
-variable "subscription_options" {
-  type = object({
-    filters = optional(string, null) # align with your module's schema
-  })
-  default = { filters = null }
-}
+To scale effectively → consolidate into one Release Management + SRE team (RM+SRE).
 
-infra/modules/pubsub_stack/versions.tf
-terraform {
-  required_version = ">= 1.5.0"
-  required_providers {
-    google = { source = "hashicorp/google", version = ">= 5.0.0" }
-  }
-}
+2. Organizational Model
 
-infra/modules/pubsub_stack/main.tf
-locals {
-  # Load store IDs (JSON or CSV)
-  store_ids_json = var.input_format == "json" ? jsondecode(file(var.stores_file)) : []
-  store_rows_csv = var.input_format == "csv"  ? csvdecode(file(var.stores_file))  : []
-  store_ids_csv  = [for r in local.store_rows_csv : r.id]
-  store_ids      = var.input_format == "json" ? local.store_ids_json : local.store_ids_csv
+RM+SRE Team
 
-  # Deterministic sharding by hash(id)
-  shard_filtered_ids = [
-    for id in local.store_ids :
-    id if (parseint(substr(md5(id), 0, 8), 16) % var.shard_count) == var.shard_index
-  ]
+Expanded group of SRE engineers with release management mandate.
 
-  # Build resource names
-  stores = {
-    for id in local.shard_filtered_ids :
-    id => {
-      topic_name = "store-topic-${id}"
-      sub_name   = "store-sub-${id}"
-    }
-  }
-}
+Owns GitHub Config Sync repos (write access restricted to RM+SRE only).
 
-# One pubsub module per store ID
-module "store_pubsub" {
-  source  = "git::https://github.com/platform-org/modules.git//pubsub?ref=refs/tags/v3.0"
-  for_each = local.stores
+Manages deployment pipelines, staggered rollouts, and monitoring.
 
-  project_id                 = var.project_id
-  name                       = each.value.topic_name
-  # NOTE: keep this spelling exactly as your external module expects.
-  # If the real variable is "message_retention_dutation" (typo), mirror it:
-  message_retention_dutation = var.message_retention
+Developers
 
-  subscription_project_id = var.project_id
+Build & test apps in dev/staging environments.
 
-  subscriptions = {
-    "${each.value.sub_name}" = {
-      # Align these keys to your module's input schema ("labels" vs "lables", "filter" vs "filters").
-      lables  = var.subscription_labels
-      options = { filters = var.subscription_options.filters }
-    }
-  }
-}
+Submit release requests directly to RM+SRE team.
 
-Shard folders (repeat for shard-0..shard-5)
-infra/shard-0/backend.tf
-terraform {
-  backend "gcs" {
-    bucket = "YOUR_TF_STATE_BUCKET"
-    prefix = "pubsub/shard-0"   # unique per shard
-  }
-}
+Provide validation artifacts (unit tests, performance benchmarks).
 
-infra/shard-0/versions.tf
-terraform {
-  required_version = ">= 1.5.0"
-}
+3. Deployment Workflow
+Step 1 – Dev Testing
 
-infra/shard-0/main.tf
-module "stack" {
-  source       = "../modules/pubsub_stack"
-  project_id   = var.project_id
-  shard_index  = 0
-  shard_count  = 6
+Developers validate functionality in lower tiers (unit, integration, load tests).
 
-  # Optional overrides
-  # input_format       = "json"
-  # stores_file        = "${path.root}/../../config/stores.json"
-  # message_retention  = "604800s"
-  # subscription_labels = { managed_by = "terraform", env = "prod" }
-  # subscription_options = { filters = "blah" }
-}
+Step 2 – Release Request
 
-variable "project_id" { type = string }
+Dev team submits deployment request to RM+SRE.
 
-infra/shard-0/terraform.tfvars
-project_id = "gcp-your-project-id"
+Request includes manifests, validation evidence, and release notes.
 
+Step 3 – Staggered Deployment
 
-For shards 1–5, copy the same four files, change prefix in backend.tf and the shard_index in main.tf to 1..5.
+RM+SRE executes controlled rollout strategy:
 
-.gitignore
-**/.terraform/*
-**/.terraform.lock.hcl
-*.tfplan
-*.tfstate
-*.tfstate.backup
-.terraform.tfstate.lock.info
+🚦 Phase 1: Deploy to 1% of stores (pilot).
 
-README.md (excerpt)
-# Pub/Sub at Scale with Terraform Shards
+🚦 Phase 2: Expand to 5% of stores (early validation).
 
-We manage ~6,000 topics + 6,000 subscriptions using 6 Terraform shards (≈1k resources each).
-Shards are selected deterministically by hashing the store ID, so each ID always maps to the same shard.
+🚦 Phase 3: Roll out to 25% of stores.
 
-## Layout
-- `config/stores.json` — authoritative list of store IDs (or a CSV with header `id`).
-- `infra/modules/pubsub_stack` — shared Terraform root module with sharding logic.
-- `infra/shard-N` — thin wrappers per shard with their own backend + variables.
+🚦 Phase 4: Full fleet rollout (100%).
 
-## Workflows
-- PRs: `.github/workflows/terraform-plan.yml` runs `plan` for all shards in parallel.
-- After merge to `main`: `.github/workflows/terraform-apply.yml` runs `apply` for all shards.
+Rollout can pause or rollback at any stage if issues detected.
 
-## Local runs (optional)
-```bash
-cd infra/shard-0 && terraform init && terraform plan -parallelism=50
+Step 4 – Monitoring & Validation
 
-Adding/Removing Stores
+RM+SRE continuously monitors:
 
-Append/remove IDs in config/stores.json.
+Application health.
 
-Open a PR. On merge, only the shard(s) owning those IDs will change.
+Store connectivity.
 
+Performance metrics.
 
----
+Issues trigger immediate rollback plan.
 
-### Notes & options
+Step 5 – Communication
 
-- **Single source of truth**: one `config/stores.json` (or CSV). The module reads it; each shard filters its slice.
-- **Backend isolation**: each shard has a unique `backend.tf` `prefix` to avoid lock contention.
-- **Module variable names**: ensure the keys you pass to your **external pubsub module** match its expectations (`lables` vs `labels`, `filters` vs `filter`, retention var name). I mirrored your snippet; adjust if needed.
-- **Policy guardrails**: keep `prevent_destroy` inside your external module defaults, and expose a toggle var to intentionally permit deletes during controlled PRs.
-- **IAM**: if you attach large IAM bindings, consider a separate module/state per shard to keep applies snappy.
+Teams Channel: Developers interact directly with RM+SRE for:
 
-If you want, I can paste ready-to-use **workflow YAMLs** wired to GCP Workload Identity (with matrix over shards) customized to your bucket name and TF SA.
+Release status updates.
+
+Rollout progress dashboards.
+
+Feedback loops.
+
+4. Roles & Responsibilities
+RM+SRE Team
+
+Gatekeepers of production deployments.
+
+Ensure no conflicts between parallel app releases.
+
+Execute staggered/canary rollouts.
+
+Own rollback playbooks.
+
+Report release health to leadership.
+
+Developers
+
+Own testing & readiness validation.
+
+Submit well-documented release requests.
+
+Provide immediate SME (subject matter expert) support if rollout issues arise.
+
+5. Example Scenarios
+
+Scenario A – High-Risk New Feature
+→ Deploy only to 1% of stores, monitor error rates, expand gradually.
+
+Scenario B – Patch Fix for Outage
+→ RM+SRE fast-tracks rollout but still stages: 1% → 25% → 100%.
+
+Scenario C – Conflicting Releases
+→ RM+SRE team prioritizes one, queues the other to maintain stability.
+
+6. Benefits
+
+For Developers: Simplified interaction → one team to handle all production rollouts.
+
+For RM+SRE Team: Unified ownership of edge apps → reduced handoffs.
+
+For Leadership: Controlled growth → confidence in scaling to 100s of stores without chaos.
+
+For Stores: Safe updates → gradual rollout reduces risk of widespread impact.
+
+7. Next Steps
+
+Expand RM+SRE team headcount for capacity.
+
+Formalize release request template + SLAs.
+
+Build automation for staged rollout percentages (1% → 5% → 25% → 100%).
+
+Provide dashboards for real-time rollout tracking.
