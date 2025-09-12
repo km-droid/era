@@ -1,128 +1,155 @@
 Release Management for GDCE Applications
 
-(Unified RM + SRE Model)
+(Unified RM+SRE Model)
 
 1. Context
 
-100+ GDCE-enabled stores already live, with more coming.
+100+ GDCE-enabled stores are already live, with more onboarding rapidly.
 
-Apps are edge-specific and require consistent, reliable deployment practices.
+Applications are edge-specific, requiring consistent and reliable deployments.
 
-To scale effectively → consolidate into one Release Management + SRE team (RM+SRE).
+To scale effectively:
+
+Consolidate into one Release Management + SRE team (RM+SRE).
+
+Simplify engagement model → Developers interact directly with RM+SRE.
 
 2. Organizational Model
 
 RM+SRE Team
 
-Expanded group of SRE engineers with release management mandate.
+Expanded group of SRE engineers with release management responsibilities.
 
 Owns GitHub Config Sync repos (write access restricted to RM+SRE only).
 
-Manages deployment pipelines, staggered rollouts, and monitoring.
+Manages deployment pipelines, staggered/canary rollouts, and monitoring.
 
 Developers
 
-Build & test apps in dev/staging environments.
+Build and test applications in lower environments (dev/staging).
 
 Submit release requests directly to RM+SRE team.
 
-Provide validation artifacts (unit tests, performance benchmarks).
+Provide validation artifacts (unit tests, performance benchmarks, release notes).
 
 3. Deployment Workflow
 Step 1 – Dev Testing
 
-Developers validate functionality in lower tiers (unit, integration, load tests).
+Developers validate application functionality in dev/staging.
+
+Perform unit, integration, and load tests.
 
 Step 2 – Release Request
 
-Dev team submits deployment request to RM+SRE.
+Developer team submits release request to RM+SRE.
 
-Request includes manifests, validation evidence, and release notes.
+Request includes:
+
+Application manifests.
+
+Test and validation evidence.
+
+Release notes and rollout scope.
 
 Step 3 – Staggered Deployment
 
-RM+SRE executes controlled rollout strategy:
+RM+SRE executes canary rollout strategy:
 
-🚦 Phase 1: Deploy to 1% of stores (pilot).
+Phase 1: Deploy to 1% of stores (pilot).
 
-🚦 Phase 2: Expand to 5% of stores (early validation).
+Phase 2: Expand to 5% of stores (early validation).
 
-🚦 Phase 3: Roll out to 25% of stores.
+Phase 3: Roll out to 25% of stores.
 
-🚦 Phase 4: Full fleet rollout (100%).
+Phase 4: Full fleet rollout (100%).
 
-Rollout can pause or rollback at any stage if issues detected.
+Rollouts can pause or rollback at any stage if issues detected.
 
 Step 4 – Monitoring & Validation
 
 RM+SRE continuously monitors:
 
-Application health.
+Application health and error rates.
 
 Store connectivity.
 
 Performance metrics.
 
-Issues trigger immediate rollback plan.
+Triggers immediate rollback if KPIs fail thresholds.
 
 Step 5 – Communication
 
-Teams Channel: Developers interact directly with RM+SRE for:
+Teams Channel:
 
-Release status updates.
+Primary interface between Developers and RM+SRE.
 
-Rollout progress dashboards.
-
-Feedback loops.
+Used for release requests, rollout updates, and feedback.
 
 4. Roles & Responsibilities
+
 RM+SRE Team
 
 Gatekeepers of production deployments.
 
-Ensure no conflicts between parallel app releases.
+Ensure no conflicts between application releases.
 
 Execute staggered/canary rollouts.
 
-Own rollback playbooks.
+Maintain rollback playbooks.
 
-Report release health to leadership.
+Provide transparent reporting to leadership.
 
 Developers
 
-Own testing & readiness validation.
+Own testing and readiness validation.
 
-Submit well-documented release requests.
+Submit complete and documented release requests.
 
-Provide immediate SME (subject matter expert) support if rollout issues arise.
+Act as SMEs (subject matter experts) during release validation.
 
 5. Example Scenarios
 
-Scenario A – High-Risk New Feature
-→ Deploy only to 1% of stores, monitor error rates, expand gradually.
+High-Risk Feature Rollout
+→ Deployed only to 1% of stores first, monitored before scaling up.
 
-Scenario B – Patch Fix for Outage
-→ RM+SRE fast-tracks rollout but still stages: 1% → 25% → 100%.
+Patch Fix for Production Issue
+→ Fast-tracked release, but still rolled out in staged phases.
 
-Scenario C – Conflicting Releases
-→ RM+SRE team prioritizes one, queues the other to maintain stability.
+Conflicting Requests
+→ RM+SRE prioritizes one release and queues the other to maintain stability.
 
 6. Benefits
 
-For Developers: Simplified interaction → one team to handle all production rollouts.
+For Developers:
 
-For RM+SRE Team: Unified ownership of edge apps → reduced handoffs.
+Single interaction model (no App SRE middle layer).
 
-For Leadership: Controlled growth → confidence in scaling to 100s of stores without chaos.
+Predictable rollout and feedback process.
 
-For Stores: Safe updates → gradual rollout reduces risk of widespread impact.
+For RM+SRE Team:
+
+Centralized ownership of GDCE applications.
+
+Simplified governance and reduced handoffs.
+
+For Leadership:
+
+Confidence in scaling to thousands of stores.
+
+Central accountability and risk mitigation.
+
+For Stores:
+
+Safer updates with canary/staggered rollout strategy.
+
+Reduced risk of widespread outages.
 
 7. Next Steps
 
-Expand RM+SRE team headcount for capacity.
+Expand RM+SRE team capacity.
 
-Formalize release request template + SLAs.
+Define release request templates and SLAs.
 
-Build automation for staged rollout percentages (1% → 5% → 25% → 100%).
+Automate staged rollout pipeline (1% → 5% → 25% → 100%).
 
-Provide dashboards for real-time rollout tracking.
+Build dashboards for real-time rollout tracking and reporting.
