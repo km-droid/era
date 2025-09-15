@@ -4,37 +4,36 @@ set -euo pipefail
 PROJECT_ID="your-project-id"
 OUTPUT_CSV="notebook_types.csv"
 
-echo "instance,location,type" > "$OUTPUT_CSV"
+echo "instance,region,type" > "$OUTPUT_CSV"
 
-# Get all instances in the project with their region
-gcloud notebooks instances list \
-  --project="$PROJECT_ID" \
-  --format="value(name,location)" | while read -r INSTANCE REGION; do
+# List of regions you care about (add/remove as needed)
+REGIONS=("us-central1" "us-east1" "us-west1" "europe-west1" "asia-east1")
 
-  echo "Checking: $INSTANCE (region=$REGION)"
-
-  DESCRIBE_OUT=$(gcloud notebooks instances describe "$INSTANCE" \
+for REGION in "${REGIONS[@]}"; do
+  echo "Listing instances in $REGION ..."
+  INSTANCES=$(gcloud notebooks instances list \
     --project="$PROJECT_ID" \
     --location="$REGION" \
-    --format="yaml(vmImage,containerImage,proxyUri)" || true)
+    --format="value(name)")
+  
+  for INSTANCE in $INSTANCES; do
+    echo "  Checking $INSTANCE in $REGION ..."
+    DESCRIBE_OUT=$(gcloud notebooks instances describe "$INSTANCE" \
+      --project="$PROJECT_ID" \
+      --location="$REGION" \
+      --format="yaml(vmImage,containerImage,proxyUri)")
+    
+    if echo "$DESCRIBE_OUT" | grep -q '^vmImage:'; then
+      TYPE="USER_MANAGED"
+    elif echo "$DESCRIBE_OUT" | grep -q '^containerImage:' || echo "$DESCRIBE_OUT" | grep -q '^proxyUri:'; then
+      TYPE="MANAGED"
+    else
+      TYPE="UNKNOWN"
+    fi
 
-  if [[ -z "$DESCRIBE_OUT" ]]; then
-    echo "  ! Could not describe instance"
-    echo "$INSTANCE,$REGION,UNKNOWN" >> "$OUTPUT_CSV"
-    continue
-  fi
-
-  if echo "$DESCRIBE_OUT" | grep -q '^vmImage:'; then
-    TYPE="USER_MANAGED"
-  elif echo "$DESCRIBE_OUT" | grep -q '^containerImage:' || echo "$DESCRIBE_OUT" | grep -q '^proxyUri:'; then
-    TYPE="MANAGED"
-  else
-    TYPE="UNKNOWN"
-  fi
-
-  echo "  → $TYPE"
-  echo "$INSTANCE,$REGION,$TYPE" >> "$OUTPUT_CSV"
+    echo "    → $TYPE"
+    echo "$INSTANCE,$REGION,$TYPE" >> "$OUTPUT_CSV"
+  done
 done
 
-echo
 echo "Report written to $OUTPUT_CSV"
