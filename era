@@ -4,24 +4,21 @@ set -euo pipefail
 PROJECT_ID="your-project-id"
 OUTPUT_CSV="notebook_types.csv"
 
-echo "instance,region,type" > "$OUTPUT_CSV"
+echo "instance,region,type,zone" > "$OUTPUT_CSV"
 
-# Dynamically discover regions where Notebook API is available
+# Discover all Notebook API regions available to the project
 REGIONS=$(gcloud notebooks locations list \
   --project="$PROJECT_ID" \
   --format="value(locationId)")
 
 for REGION in $REGIONS; do
   echo "Listing instances in $REGION ..."
-  
   INSTANCES=$(gcloud notebooks instances list \
     --project="$PROJECT_ID" \
     --location="$REGION" \
     --format="value(name)" || true)
 
-  if [[ -z "$INSTANCES" ]]; then
-    continue
-  fi
+  [[ -z "${INSTANCES}" ]] && continue
 
   for INSTANCE in $INSTANCES; do
     echo "  Checking $INSTANCE in $REGION ..."
@@ -30,18 +27,32 @@ for REGION in $REGIONS; do
       --location="$REGION" \
       --format="yaml(vmImage,containerImage,proxyUri)" || true)
 
-    if [[ -z "$DESCRIBE_OUT" ]]; then
-      TYPE="UNKNOWN"
-    elif echo "$DESCRIBE_OUT" | grep -q '^vmImage:'; then
-      TYPE="USER_MANAGED"
-    elif echo "$DESCRIBE_OUT" | grep -q '^containerImage:' || echo "$DESCRIBE_OUT" | grep -q '^proxyUri:'; then
-      TYPE="MANAGED"
-    else
-      TYPE="UNKNOWN"
+    TYPE="UNKNOWN"
+    ZONE=""
+
+    if [[ -n "$DESCRIBE_OUT" ]]; then
+      if echo "$DESCRIBE_OUT" | grep -q '^vmImage:'; then
+        TYPE="USER_MANAGED"
+      elif echo "$DESCRIBE_OUT" | grep -q '^containerImage:' || echo "$DESCRIBE_OUT" | grep -q '^proxyUri:'; then
+        TYPE="MANAGED"
+      fi
     fi
 
-    echo "    → $INSTANCE = $TYPE"
-    echo "$INSTANCE,$REGION,$TYPE" >> "$OUTPUT_CSV"
+    # If it's user-managed, try to find the underlying GCE VM zone by name
+    if [[ "$TYPE" == "USER_MANAGED" ]]; then
+      # Note: user-managed Workbench VMs are regular GCE instances in your project
+      # We search all zones for an instance with this name and grab its zone basename.
+      ZONE=$(gcloud compute instances list \
+        --project="$PROJECT_ID" \
+        --filter="name=('${INSTANCE}')" \
+        --format="value(zone.basename())" \
+        2>/dev/null | head -n1 || true)
+
+      # If name-collisions or custom naming exist, refine the filter (e.g., by label) as needed.
+    fi
+
+    echo "    → $INSTANCE = $TYPE ${ZONE:+(zone: $ZONE)}"
+    echo "$INSTANCE,$REGION,$TYPE,$ZONE" >> "$OUTPUT_CSV"
   done
 done
 
