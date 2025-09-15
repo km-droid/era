@@ -1,155 +1,28 @@
-Release Management for GDCE Applications
-
-(Unified RM+SRE Model)
-
-1. Context
-
-100+ GDCE-enabled stores are already live, with more onboarding rapidly.
-
-Applications are edge-specific, requiring consistent and reliable deployments.
-
-To scale effectively:
-
-Consolidate into one Release Management + SRE team (RM+SRE).
-
-Simplify engagement model → Developers interact directly with RM+SRE.
-
-2. Organizational Model
-
-RM+SRE Team
-
-Expanded group of SRE engineers with release management responsibilities.
-
-Owns GitHub Config Sync repos (write access restricted to RM+SRE only).
-
-Manages deployment pipelines, staggered/canary rollouts, and monitoring.
-
-Developers
-
-Build and test applications in lower environments (dev/staging).
-
-Submit release requests directly to RM+SRE team.
-
-Provide validation artifacts (unit tests, performance benchmarks, release notes).
-
-3. Deployment Workflow
-Step 1 – Dev Testing
-
-Developers validate application functionality in dev/staging.
-
-Perform unit, integration, and load tests.
-
-Step 2 – Release Request
-
-Developer team submits release request to RM+SRE.
-
-Request includes:
-
-Application manifests.
-
-Test and validation evidence.
-
-Release notes and rollout scope.
-
-Step 3 – Staggered Deployment
-
-RM+SRE executes canary rollout strategy:
-
-Phase 1: Deploy to 1% of stores (pilot).
-
-Phase 2: Expand to 5% of stores (early validation).
-
-Phase 3: Roll out to 25% of stores.
-
-Phase 4: Full fleet rollout (100%).
-
-Rollouts can pause or rollback at any stage if issues detected.
-
-Step 4 – Monitoring & Validation
-
-RM+SRE continuously monitors:
-
-Application health and error rates.
-
-Store connectivity.
-
-Performance metrics.
-
-Triggers immediate rollback if KPIs fail thresholds.
-
-Step 5 – Communication
-
-Teams Channel:
-
-Primary interface between Developers and RM+SRE.
-
-Used for release requests, rollout updates, and feedback.
-
-4. Roles & Responsibilities
-
-RM+SRE Team
-
-Gatekeepers of production deployments.
-
-Ensure no conflicts between application releases.
-
-Execute staggered/canary rollouts.
-
-Maintain rollback playbooks.
-
-Provide transparent reporting to leadership.
-
-Developers
-
-Own testing and readiness validation.
-
-Submit complete and documented release requests.
-
-Act as SMEs (subject matter experts) during release validation.
-
-5. Example Scenarios
-
-High-Risk Feature Rollout
-→ Deployed only to 1% of stores first, monitored before scaling up.
-
-Patch Fix for Production Issue
-→ Fast-tracked release, but still rolled out in staged phases.
-
-Conflicting Requests
-→ RM+SRE prioritizes one release and queues the other to maintain stability.
-
-6. Benefits
-
-For Developers:
-
-Single interaction model (no App SRE middle layer).
-
-Predictable rollout and feedback process.
-
-For RM+SRE Team:
-
-Centralized ownership of GDCE applications.
-
-Simplified governance and reduced handoffs.
-
-For Leadership:
-
-Confidence in scaling to thousands of stores.
-
-Central accountability and risk mitigation.
-
-For Stores:
-
-Safer updates with canary/staggered rollout strategy.
-
-Reduced risk of widespread outages.
-
-7. Next Steps
-
-Expand RM+SRE team capacity.
-
-Define release request templates and SLAs.
-
-Automate staged rollout pipeline (1% → 5% → 25% → 100%).
-
-Build dashboards for real-time rollout tracking and reporting.
+#!/bin/bash
+
+PROJECT_ID="your-project-id"
+REGION="us-central1"   # change to your region
+INPUT_FILE="instances.txt"
+
+while IFS= read -r INSTANCE_NAME; do
+  echo "Checking instance: $INSTANCE_NAME"
+
+  # Grab only the key fields
+  OUTPUT=$(gcloud notebooks instances describe "$INSTANCE_NAME" \
+    --project="$PROJECT_ID" \
+    --location="$REGION" \
+    --format="yaml(vmImage,containerImage,proxyUri)")
+
+  echo "$OUTPUT"
+
+  # Simple classification
+  if echo "$OUTPUT" | grep -q "vmImage:"; then
+    echo "→ $INSTANCE_NAME is USER-MANAGED (GCE VM)"
+  elif echo "$OUTPUT" | grep -q "containerImage:"; then
+    echo "→ $INSTANCE_NAME is MANAGED (Google container runtime)"
+  else
+    echo "→ Could not determine type"
+  fi
+
+  echo "--------------------------------"
+done < "$INPUT_FILE"
