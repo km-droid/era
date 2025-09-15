@@ -1,28 +1,40 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 PROJECT_ID="your-project-id"
-REGION="us-central1"   # change to your region
-INPUT_FILE="instances.txt"
+OUTPUT_CSV="notebook_types.csv"
 
-while IFS= read -r INSTANCE_NAME; do
-  echo "Checking instance: $INSTANCE_NAME"
+echo "instance,location,type" > "$OUTPUT_CSV"
 
-  # Grab only the key fields
-  OUTPUT=$(gcloud notebooks instances describe "$INSTANCE_NAME" \
+# Get all instances in the project with their region
+gcloud notebooks instances list \
+  --project="$PROJECT_ID" \
+  --format="value(name,location)" | while read -r INSTANCE REGION; do
+
+  echo "Checking: $INSTANCE (region=$REGION)"
+
+  DESCRIBE_OUT=$(gcloud notebooks instances describe "$INSTANCE" \
     --project="$PROJECT_ID" \
     --location="$REGION" \
-    --format="yaml(vmImage,containerImage,proxyUri)")
+    --format="yaml(vmImage,containerImage,proxyUri)" || true)
 
-  echo "$OUTPUT"
-
-  # Simple classification
-  if echo "$OUTPUT" | grep -q "vmImage:"; then
-    echo "→ $INSTANCE_NAME is USER-MANAGED (GCE VM)"
-  elif echo "$OUTPUT" | grep -q "containerImage:"; then
-    echo "→ $INSTANCE_NAME is MANAGED (Google container runtime)"
-  else
-    echo "→ Could not determine type"
+  if [[ -z "$DESCRIBE_OUT" ]]; then
+    echo "  ! Could not describe instance"
+    echo "$INSTANCE,$REGION,UNKNOWN" >> "$OUTPUT_CSV"
+    continue
   fi
 
-  echo "--------------------------------"
-done < "$INPUT_FILE"
+  if echo "$DESCRIBE_OUT" | grep -q '^vmImage:'; then
+    TYPE="USER_MANAGED"
+  elif echo "$DESCRIBE_OUT" | grep -q '^containerImage:' || echo "$DESCRIBE_OUT" | grep -q '^proxyUri:'; then
+    TYPE="MANAGED"
+  else
+    TYPE="UNKNOWN"
+  fi
+
+  echo "  → $TYPE"
+  echo "$INSTANCE,$REGION,$TYPE" >> "$OUTPUT_CSV"
+done
+
+echo
+echo "Report written to $OUTPUT_CSV"
